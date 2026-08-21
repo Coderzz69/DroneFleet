@@ -10,7 +10,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from fleet.agents.drone import DroneAgent
 from fleet.core.nlp import detect_hazard, parse_drone, parse_mission
-from fleet.sim.world import World
+from fleet.sim.world import World, Waypoint
 from fleet.core.ontology import load_pack
 from fleet.core.planner import DEGRADED, FEASIBLE, INSUFFICIENT, Planner
 from fleet.core.registry import Registry
@@ -23,6 +23,10 @@ def check(label, got, want):
     ok = got == want
     PASS, FAIL = PASS + ok, FAIL + (not ok)
     print(f"  {'ok  ' if ok else 'FAIL'} {label}" + ("" if ok else f"   got={got!r} want={want!r}"))
+
+
+def check_true(label, cond):
+    check(label, bool(cond), True)
 
 
 def fleet(pack, *descriptions):
@@ -168,6 +172,41 @@ def main():
           DroneAgent._actionable("deliver_payload", {"kind": "survivor"}), True)
     check("delivery skips a hostile",
           DroneAgent._actionable("deliver_payload", {"kind": "hostile"}), False)
+
+    print("\nan untasked drone stays on the pad")
+    import math as _m
+    w2 = World()
+    rec = parse_drone("thermal search drone, 60 min endurance, 20km radio", sar, "drone-1")
+    st = w2.spawn(rec)
+    x0, y0 = st.x, st.y
+    for _ in range(6000):
+        w2.tick(0.1)                       # 600 simulated seconds
+    check("parked, not airborne", st.airborne, False)
+    check("does not drift downwind", round(_m.hypot(st.x - x0, st.y - y0), 1), 0.0)
+    check("burns no battery on the pad", st.battery_pct(), 100.0)
+    check("logs no distance flown", round(st.distance_flown_m, 1), 0.0)
+
+    print("\nstation-keeping holds position and costs power")
+    w2.assign_route("drone-1", [Waypoint(x0 + 2000, y0 - 2000, hold_s=9e9)], "T1", "loiter")
+    check("tasking is what launches it", st.airborne, True)
+    for _ in range(2600):
+        w2.tick(0.1)
+    hx, hy, b0 = st.x, st.y, st.battery_pct()
+    for _ in range(3000):
+        w2.tick(0.1)                       # 300 s holding station
+    check("holds position against the wind",
+          round(_m.hypot(st.x - hx, st.y - hy), 1), 0.0)
+    check_true("fighting the wind drains battery", st.battery_pct() < b0 - 1)
+
+    print("\nidle with nothing to do returns to base and lands")
+    st.current_task = None
+    st.hold_timer = 0.0
+    st.waypoints.clear()
+    for _ in range(12000):
+        w2.tick(0.1)
+    check("landed again", st.airborne, False)
+    check_true("home, within 100 m of base",
+               _m.hypot(st.x - w2.base[0], st.y - w2.base[1]) < 100)
 
     print(f"\n  {PASS} passed, {FAIL} failed\n")
     return 1 if FAIL else 0

@@ -25,7 +25,7 @@ python3 run.py          # then open http://127.0.0.1:8080
 8. [Reading the verdict](#8-reading-the-verdict)
 9. [Running a mission](#9-running-a-mission)
 10. [Fault injection](#10-fault-injection)
-11. [Local LLM (optional)](#11-local-llm-optional)
+11. [Local LLM](#11-local-llm)
 12. [Configuration](#12-configuration)
 13. [Writing your own domain pack](#13-writing-your-own-domain-pack)
 14. [How it works](#14-how-it-works)
@@ -87,8 +87,9 @@ python3 run.py
 
 ### Optional: local LLM
 
-Off by default. See [section 11](#11-local-llm-optional). Everything works
-without it.
+On by default, but entirely optional — if Ollama is not installed the app
+starts anyway and uses the deterministic parser. See
+[section 11](#11-local-llm).
 
 ### Optional: watch the bus from outside
 
@@ -137,6 +138,27 @@ What you are looking at:
 - **Red pulsing ring** — that drone has lost its radio link.
 - **White dashed path** — the drone's remaining waypoints.
 - **Grey drone** — lost (killed, or battery dead).
+- **Drone inside a dark ring, rotors still** — landed on the pad.
+
+### Drone lifecycle
+
+A registered drone is **parked**, not deployed. On the pad it does not drift,
+does not burn battery, and reports `LANDED`. Tasking is the only thing that
+launches it.
+
+| Status | Meaning |
+|---|---|
+| `LANDED` | On the pad. No drift, no power draw |
+| `TRANSIT` | Flying to a waypoint |
+| `WORKING` | On its final leg, doing the job |
+| `ON_STATION` | Holding position |
+| `RETURNING` | Idle too long — flying home to land |
+
+Holding station is **not** free hovering: the drone tilts into the wind to
+cancel it, holds position exactly over the ground, and is charged for the
+airspeed that costs. With nothing to do for 25 simulated seconds it returns to
+base and shuts down, so an aborted or finished mission ends with the fleet home
+rather than drifting downwind until the batteries die.
 
 ### Contacts: two independent axes
 
@@ -563,24 +585,29 @@ being heard.
 
 ---
 
-## 11. Local LLM (optional)
+## 11. Local LLM
 
-Off by default. The app runs fully offline with a deterministic keyword parser.
-When enabled, a **local** model via Ollama does the text→structure step. No API
-key, no cloud, no telemetry.
+**On by default.** A **local** model via Ollama does the text→structure step.
+No API key, no cloud, no telemetry. If Ollama is not running the app still
+starts and falls back to the deterministic keyword parser — it just says so:
+
+```
+Parser: deterministic  (toggle in the app with `llm on` / `llm off`)
+```
 
 ### Setup
 
 ```
 export PATH="$HOME/.local/ollama/bin:$PATH"
-ollama serve &                      # daemon on 127.0.0.1:11434
-ollama pull gemma2:2b               # or qwen2.5:1.5b-instruct
+ollama serve &                          # daemon on 127.0.0.1:11434
+ollama pull qwen2.5:1.5b-instruct       # the default
 
-python3 run.py --llm                                    # gemma2:2b
-python3 run.py --llm --llm-model qwen2.5:1.5b-instruct  # ~19x faster
+python3 run.py                          # LLM on
+python3 run.py --llm-model gemma2:2b    # a 2B model instead
+python3 run.py --no-llm                 # deterministic parser only
 ```
 
-`./start.sh` does all of the above for you.
+`./start.sh` starts the daemon, pulls the model if missing, and launches.
 
 Toggle live in the dialogue box: `llm on`, `llm off`, `llm status`,
 `llm model <tag>`.
@@ -591,12 +618,13 @@ Measured on this machine, CPU only, no GPU:
 
 | Model | Size | Accuracy | Phantom verbs | Latency |
 |---|---|---|---|---|
+| `qwen2.5:1.5b-instruct` **(default)** | 1.0 GB | 7/7 | 0 | ~1.8 s/call |
 | `gemma2:2b` | 1.6 GB | 7/7 | 0 | ~34 s/call |
-| `qwen2.5:1.5b-instruct` | 1.0 GB | 7/7 | 0 | ~1.8 s/call |
 
 Identical accuracy on the fixture set; the 1.5B is nineteen times faster, which
-is the difference between usable and not in an interactive UI. Calls run in a
-worker thread, so the simulation never stalls while the model thinks.
+is the difference between usable and not in an interactive UI, so it is the
+default. Switch any time with `llm model gemma2:2b`. Calls run in a worker
+thread, so the simulation never stalls while the model thinks.
 
 ### What it buys you
 
@@ -680,8 +708,9 @@ because they live on the consuming side.
 | `--mqtt-host` | `127.0.0.1` | MQTT broker host |
 | `--mqtt-port` | `1883` | MQTT broker port |
 | `--no-embed-broker` | off | Use an external broker instead of the built-in one |
-| `--llm` | off | Enable the local model at startup |
-| `--llm-model` | `gemma2:2b` | Ollama model tag |
+| `--llm` | on | Use the local model (this is the default) |
+| `--no-llm` | off | Skip the model; deterministic parser only |
+| `--llm-model` | `qwen2.5:1.5b-instruct` | Ollama model tag |
 | `--llm-host` | `http://127.0.0.1:11434` | Ollama endpoint |
 | `--open` | off | Open a browser automatically |
 | `-v`, `--verbose` | off | Debug logging |

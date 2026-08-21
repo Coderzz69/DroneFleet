@@ -140,7 +140,7 @@ function buildTileset(){
 }
 
 // ============================================================ sprites
-function drawDrone(g,cx,cy,size,color,headingDeg,spin,dead){
+function drawDrone(g,cx,cy,size,color,headingDeg,spin,dead,landed){
   const s=size/16;
   g.save(); g.translate(cx,cy); g.rotate(headingDeg*Math.PI/180); g.scale(s,s);
   g.imageSmoothingEnabled=false;
@@ -154,7 +154,7 @@ function drawDrone(g,cx,cy,size,color,headingDeg,spin,dead){
   [[-6,-6],[6,-6],[-6,6],[6,6]].forEach(([ox,oy])=>{
     g.fillStyle=dead?'#6a6a6a':'#20282f';
     g.beginPath(); g.arc(ox,oy,r,0,Math.PI*2); g.fill();
-    if(!dead){
+    if(!dead&&!landed){          // rotors only spin when it is actually flying
       g.strokeStyle=color; g.lineWidth=1.1; g.globalAlpha=.85;
       g.beginPath(); g.arc(ox,oy,r-0.6,ph,ph+2.1); g.stroke();
       g.beginPath(); g.arc(ox,oy,r-0.6,ph+Math.PI,ph+Math.PI+2.1); g.stroke();
@@ -581,7 +581,14 @@ function render(){
       ctx.save(); ctx.strokeStyle='#d84848'; ctx.lineWidth=2; ctx.globalAlpha=.5+0.5*Math.sin(frame*0.2);
       ctx.beginPath(); ctx.arc(sx,sy,size*0.72,0,Math.PI*2); ctx.stroke(); ctx.restore();
     }
-    drawDrone(ctx,sx,sy,size,color,d.heading_deg,frame*0.55,!d.alive);
+    const landed = d.airborne===false && d.alive;
+    if(landed){                                   // a pad ring, so parked reads
+      ctx.save(); ctx.strokeStyle='#00000055'; ctx.lineWidth=2;
+      ctx.beginPath(); ctx.arc(sx,sy,size*0.52,0,Math.PI*2); ctx.stroke(); ctx.restore();
+    }
+    ctx.save(); if(landed) ctx.globalAlpha=0.82;
+    drawDrone(ctx,sx,sy,size,color,d.heading_deg,frame*0.55,!d.alive,landed);
+    ctx.restore();
 
     if(state.selected===d.id){
       ctx.save();
@@ -745,7 +752,8 @@ function renderParty(){
 
     const cv=document.createElement('canvas'); cv.width=cv.height=32;
     const g=cv.getContext('2d'); g.imageSmoothingEnabled=false;
-    drawDrone(g,16,16,28,ROLE_COLOR[d.current_verb]||roleColorOf(d.id),-90,frame*0.3,!d.alive);
+    drawDrone(g,16,16,28,ROLE_COLOR[d.current_verb]||roleColorOf(d.id),-90,frame*0.3,
+              !d.alive, d.airborne===false && d.alive);
 
     const info=document.createElement('div');
     const verbs=rec?rec.capabilities.map(c=>c.verb).filter(v=>v!=='loiter'):[];
@@ -831,7 +839,8 @@ function renderSummary(){
 
   const g=document.getElementById('sum-sprite').getContext('2d');
   g.imageSmoothingEnabled=false;
-  drawDrone(g,22,22,40,ROLE_COLOR[d.current_verb]||roleColorOf(d.id),-90,frame*0.3,!d.alive);
+  drawDrone(g,22,22,40,ROLE_COLOR[d.current_verb]||roleColorOf(d.id),-90,frame*0.3,
+            !d.alive, d.airborne===false && d.alive);
 }
 
 function taskOf(id){

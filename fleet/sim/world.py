@@ -24,6 +24,7 @@ G = 9.81
 AIR_DENSITY = 1.225
 HOVER_POWER_PER_KG = 165.0     # W/kg, typical small multirotor
 PARASITIC_K = 0.0125           # W per (m/s)^3, lumped drag coefficient
+RTL_IDLE_S = 25.0              # idle this long with nothing to do -> fly home
 
 
 @dataclass
@@ -58,6 +59,9 @@ class DroneState:
     link_dbm: float = -60.0
     link_via: str = "direct"
     distance_flown_m: float = 0.0
+    airborne: bool = False        # parked on the pad until something tasks it
+    returning: bool = False       # flying home to land
+    idle_s: float = 0.0           # how long it has had nothing to do
 
     def battery_pct(self) -> float:
         return max(0.0, min(100.0, 100.0 * self.battery_wh / max(1e-6, self.battery_wh_max)))
@@ -125,6 +129,9 @@ class World:
         st.current_task = task_id
         st.current_verb = verb
         st.task_progress = 0.0
+        st.airborne = True        # this is the only thing that launches a drone
+        st.returning = False
+        st.idle_s = 0.0
         st.status = "TRANSIT"
 
     def lawnmower(self, rec: DroneRecord, region: dict) -> list[Waypoint]:
@@ -194,10 +201,20 @@ class World:
             return events
         c = rec.constraints
 
+        # Parked. A registered drone sits on the pad at the base: it does not
+        # drift, and it does not burn battery. Nothing here runs until it is
+        # actually tasked.
+        if not st.airborne:
+            st.speed = 0.0
+            st.status = "LANDED"
+            return events
+
+        station_keeping = True
         if st.hold_timer > 0:
             st.hold_timer -= dt
             st.speed = max(0.0, st.speed - c.accel_ms2 * dt)
         elif st.waypoints:
+            station_keeping = False
             wp = st.waypoints[0]
             dx, dy = wp.x - st.x, wp.y - st.y
             dist = math.hypot(dx, dy)
@@ -209,6 +226,13 @@ class World:
                 st.waypoints.pop(0)
                 st.hold_timer = wp.hold_s
                 if not st.waypoints:
+                    if st.returning:          # home again -- shut down
+                        st.airborne = False
+                        st.returning = False
+                        st.speed = 0.0
+                        st.idle_s = 0.0
+                        st.status = "LANDED"
+                        return events
                     st.status = "ON_STATION"
             else:
                 # --- heading control, rate-limited -------------------------
@@ -234,10 +258,36 @@ class World:
                 st.speed = max(0.0, min(st.speed, c.max_speed_ms))
                 st.status = "TRANSIT" if len(st.waypoints) > 1 else "WORKING"
 
+        # --- idle -> return to base ------------------------------------------
+        if station_keeping and not st.current_task:
+            st.idle_s += dt
+            if st.idle_s > RTL_IDLE_S and not st.returning:
+                st.returning = True
+                st.waypoints = [Waypoint(self.base[0], self.base[1], label="rtl")]
+                st.status = "RETURNING"
+        elif st.current_task:
+            st.idle_s = 0.0
+
         # --- integrate with wind ---------------------------------------------
         wx, wy = self._wind_vector()
-        vx = st.speed * math.cos(st.heading) + wx
-        vy = st.speed * math.sin(st.heading) + wy
+        if station_keeping:
+            # Holding station is not hovering in still air: the drone tilts into
+            # the wind and cancels it, so it stays put over the ground. Yaw is
+            # independent of tilt on a multirotor, so the heading it points does
+            # not change -- and fighting the wind is charged for below.
+            wind_mag = math.hypot(wx, wy)
+            if wind_mag <= c.max_speed_ms:
+                vx = vy = 0.0
+                airspeed = wind_mag
+            else:                       # out-blown: it is losing ground
+                excess = (wind_mag - c.max_speed_ms) / wind_mag
+                vx, vy = wx * excess, wy * excess
+                airspeed = c.max_speed_ms
+        else:
+            vx = st.speed * math.cos(st.heading) + wx
+            vy = st.speed * math.sin(st.heading) + wy
+            airspeed = st.speed
+
         st.x += vx * dt
         st.y += vy * dt
         st.distance_flown_m += math.hypot(vx, vy) * dt
@@ -245,7 +295,7 @@ class World:
         st.y = max(0.0, min(self.size_m, st.y))
 
         # --- battery ---------------------------------------------------------
-        st.battery_wh -= self._power_w(rec, st.speed) * (dt / 3600.0)
+        st.battery_wh -= self._power_w(rec, airspeed) * (dt / 3600.0)
         if st.battery_wh <= 0 and st.alive:
             st.battery_wh = 0.0
             st.alive = False
@@ -346,7 +396,7 @@ class World:
                 "heading_deg": round(math.degrees(s.heading) % 360, 1),
                 "speed_ms": round(s.speed, 2),
                 "battery_pct": round(s.battery_pct(), 1),
-                "alive": s.alive, "status": s.status,
+                "alive": s.alive, "status": s.status, "airborne": s.airborne,
                 "current_task": s.current_task, "current_verb": s.current_verb,
                 "next_task": s.next_task, "next_verb": s.next_verb,
                 "task_progress": round(s.task_progress, 3),

@@ -27,8 +27,11 @@ async def main() -> None:
     ap.add_argument("--no-embed-broker", action="store_true",
                     help="use an external MQTT broker instead of the built-in one")
     ap.add_argument("--llm", action="store_true",
-                    help="use a local Ollama model for text parsing")
-    ap.add_argument("--llm-model", default="gemma2:2b", help="Ollama model tag")
+                    help="(default) use a local Ollama model for text parsing")
+    ap.add_argument("--no-llm", action="store_true",
+                    help="skip the model and use the deterministic parser only")
+    ap.add_argument("--llm-model", default="qwen2.5:1.5b-instruct",
+                    help="Ollama model tag (try gemma2:2b for a 2B model)")
     ap.add_argument("--llm-host", default="http://127.0.0.1:11434")
     ap.add_argument("--open", action="store_true", help="open a browser automatically")
     ap.add_argument("-v", "--verbose", action="store_true")
@@ -43,14 +46,17 @@ async def main() -> None:
                  embed_broker=not args.no_embed_broker)
     rt.llm_model, rt.llm_host = args.llm_model, args.llm_host
     await rt.start()
-    if args.llm:
-        await rt.enable_llm(args.llm_model, args.llm_host)
+    # on by default; if Ollama is not up this reports why and the deterministic
+    # parser carries on, so the app always starts
+    use_llm = not args.no_llm
+    if use_llm:
+        use_llm = await rt.enable_llm(args.llm_model, args.llm_host)
 
     url = f"http://{args.host}:{args.port}"
     print(f"\n  DroneFleet ready  →  {url}")
     print(f"  MQTT bus on {args.mqtt_host}:{args.mqtt_port}"
           f"{' (embedded)' if not args.no_embed_broker else ''}")
-    print(f"  Parser: {'LLM ' + args.llm_model if args.llm else 'deterministic'}"
+    print(f"  Parser: {'LLM ' + args.llm_model if use_llm else 'deterministic'}"
           f"  (toggle in the app with `llm on` / `llm off`)")
     print("  Watch the raw protocol:  mosquitto_sub -t 'fleet/#' -v\n")
     if args.open:

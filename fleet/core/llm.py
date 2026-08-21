@@ -34,7 +34,10 @@ from .ontology import Pack
 log = logging.getLogger("llm")
 
 DEFAULT_HOST = "http://127.0.0.1:11434"
-DEFAULT_MODEL = "gemma2:2b"
+# qwen2.5:1.5b matched gemma2:2b for accuracy on the fixture set and is
+# ~19x faster on CPU, which is the difference between usable and not
+# in an interactive UI. `llm model gemma2:2b` switches at runtime.
+DEFAULT_MODEL = "qwen2.5:1.5b-instruct"
 SENSORS = ["thermal", "eo_ir", "rgb", "lidar", "radar"]
 DIRECTIONS = ["north", "south", "east", "west",
               "northeast", "northwest", "southeast", "southwest", "center"]
