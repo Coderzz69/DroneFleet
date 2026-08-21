@@ -1,6 +1,6 @@
 """MQTT topic map. The whole protocol surface, in one place."""
 
-ROOT = "fleet"
+ROOT = "fleet/v1"
 
 BROADCAST = f"{ROOT}/broadcast"                      # master -> everyone
 MASTER_INBOX = f"{ROOT}/master/inbox"                # drones -> master

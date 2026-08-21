@@ -567,6 +567,7 @@ class Runtime:
         agent = DroneAgent(rec, self.world, self.mqtt_host, self.mqtt_port)
         await agent.start()
         self.agents[did] = agent
+        await self.master.fleet_changed(f"{rec.name} joined the fleet")
 
         await self.say("register", f"✓ {did} \"{rec.name}\" — "
                                    f"[{', '.join(sorted(rec.verbs()))}] · "

@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import json
 import time
+import uuid
 from dataclasses import asdict, dataclass, field
 from typing import Optional
 
@@ -55,6 +56,9 @@ class DroneView:
     y: Optional[float] = None
     heading_deg: Optional[float] = None
     speed_ms: Optional[float] = None
+    target_x: Optional[float] = None
+    target_y: Optional[float] = None
+    airborne: bool = False
     link_ok: bool = True
     link_via: str = ""
     last_heard: float = 0.0
@@ -79,6 +83,7 @@ class Master:
         self.mqtt = MQTTClient("master-0", host, port)
         self.plan: Optional[Plan] = None
         self.spec: Optional[MissionSpec] = None
+        self.mission_id: Optional[str] = None
         self.mission_active = False
         self.last_seen: dict[str, float] = {}
         self.views: dict[str, DroneView] = {}   # the master's belief about the fleet
@@ -108,6 +113,7 @@ class Master:
         data["fleet"] = [d.to_dict() for d in self.registry.all()]
         data["domain"] = self.pack.domain
         data["mission_active"] = self.mission_active
+        data["mission_id"] = self.mission_id
         now = time.time()
         data["views"] = [self.views[d.id].to_dict(now)
                          for d in self.registry.all() if d.id in self.views]
@@ -132,15 +138,25 @@ class Master:
         env = Envelope.from_json(payload)
         now = time.time()
         self.last_seen[env.src] = now
+        if (rec := self.registry.get(env.src)):
+            rec.online = True
         v = self.view(env.src)
         p = env.payload
         v.x, v.y = p.get("x"), p.get("y")
         v.heading_deg = p.get("heading_deg")
         v.speed_ms = p.get("speed_ms")
+        v.target_x = p.get("target_x", v.target_x)
+        v.target_y = p.get("target_y", v.target_y)
+        v.airborne = bool(p.get("airborne", v.airborne))
         v.battery_pct = p.get("battery_pct", v.battery_pct)
         v.link_via = p.get("link_via", v.link_via)
         v.last_telemetry = now
         v.last_heard = now
+        # External vehicles have no simulator world snapshot. Forward their
+        # received telemetry through the retained plan channel so the UI can
+        # render their position and task state as it does local drones.
+        if env.src not in self.world.drones:
+            await self.push_plan()
 
     async def _on_msg(self, topic: str, payload: bytes) -> None:
         env = Envelope.from_json(payload)
@@ -149,9 +165,36 @@ class Master:
             self.view(env.src).last_heard = time.time()
 
         if env.type == MsgType.CAPABILITY_ANNOUNCE:
-            await self.console("wire", f"{env.src} announced "
-                                       f"[{', '.join(c['verb'] for c in env.payload.get('capabilities', []))}]",
+            try:
+                announced = DroneRecord.from_wire(env.payload)
+            except (TypeError, ValueError, KeyError) as exc:
+                await self.console("error", f"Rejected manifest from {env.src}: {exc}",
+                                   src=env.src, type=env.type)
+                return
+            existing = self.registry.get(announced.id)
+            is_new = existing is None
+            capabilities_changed = False
+            if existing:
+                # Preserve an in-process simulator record and its world object.
+                capabilities_changed = existing.verbs() != announced.verbs()
+                existing.online = True
+                existing.metadata.update(announced.metadata)
+                rec = existing
+            else:
+                rec = self.registry.add(announced)
+            self.last_seen[rec.id] = time.time()
+            self.view(rec.id).name = rec.name
+            names = [c.get("name", c.get("verb", "")) if isinstance(c, dict)
+                     else str(c) for c in env.payload.get("capabilities", [])]
+            await self.console("wire", f"{env.src} announced [{', '.join(names)}]",
                                src=env.src, type=env.type)
+            await self.console("register", f"{rec.id} online — {rec.name} "
+                                           f"[{', '.join(sorted(rec.verbs()))}]",
+                               src=rec.id, type=env.type)
+            if self.spec and (is_new or capabilities_changed):
+                await self._replan_live(f"{rec.name} joined the fleet")
+            else:
+                await self.push_plan()
 
         elif env.type == MsgType.TASK_ACK:
             v = self.view(env.src)
@@ -211,13 +254,23 @@ class Master:
             v = self.view(env.src)
             v.battery_pct = env.payload.get("battery_pct", v.battery_pct)
             v.link_ok = bool(env.payload.get("link_ok", True))
+            if (rec := self.registry.get(env.src)):
+                rec.online = True
 
         elif env.type == MsgType.ALERT:
             await self.console("alert", f"{env.src}: {env.payload.get('text','alert')}", src=env.src)
 
     # -- planning ------------------------------------------------------------
     def register(self, rec: DroneRecord) -> None:
+        rec.online = True
         self.registry.add(rec)
+
+    async def fleet_changed(self, reason: str) -> None:
+        """Reconcile an in-process registration with an active mission."""
+        if self.spec:
+            await self._replan_live(reason)
+        else:
+            await self.push_plan()
 
     def set_pack(self, name: str) -> None:
         self.pack = load_pack(name)
@@ -236,6 +289,7 @@ class Master:
         if not self.plan or self.plan.verdict == INSUFFICIENT:
             return False
         self.mission_active = True
+        self.mission_id = f"mission-{uuid.uuid4().hex[:12]}"
         self._tokens.clear()
         for v in self.views.values():          # last mission's beliefs are not this one's
             v.phase, v.task_id, v.verb = "IDLE", None, ""
@@ -287,6 +341,25 @@ class Master:
                 return False, f"'{policy.token}' is stale ({age:.0f}s > {policy.ttl_s:.0f}s)"
         return True, ""
 
+    def _authorization_required(self, task) -> bool:
+        """Return true for a manifest-declared high-risk capability.
+
+        The planner may still show such a task so the operator understands the
+        proposed workflow, but the autonomous dispatcher never sends it.  A
+        future reviewed authorization service can issue an explicit grant
+        message; there is intentionally no implicit or model-generated grant.
+        """
+        rec = self.registry.get(task.assignee) if task.assignee else None
+        if not rec:
+            return False
+        for item in (rec.metadata.get("capabilities", []) if rec.metadata else []):
+            if not isinstance(item, dict):
+                continue
+            name = item.get("name", item.get("verb"))
+            if name == task.verb and item.get("requires_human_authorization"):
+                return True
+        return False
+
     async def _dispatch_ready(self) -> None:
         """Send every task whose dependencies are DONE and whose interlocks hold."""
         if not self.plan or not self.mission_active:
@@ -299,6 +372,12 @@ class Master:
                 continue
             if not all(d in done for d in task.depends_on):
                 continue
+            if self._authorization_required(task):
+                if "human authorization" not in task.note.lower():
+                    task.note = "held: explicit human authorization required"
+                    await self.console("approval", f"{task.id} {task.verb} held for human authorization",
+                                       src="master-0", type=MsgType.AUTHORIZATION_REQUEST)
+                continue
             ok, why = self._interlock_ok(task)
             if not ok:
                 task.note = f"interlock held: {why}"
@@ -307,7 +386,7 @@ class Master:
             task.state = "ASSIGNED"
             await self.mqtt.publish(topics.drone_inbox(task.assignee), Envelope(
                 type=MsgType.TASK_ASSIGN, src="master-0", dst=task.assignee,
-                corr_id=task.id, requires_ack=True,
+                corr_id=task.id, mission_id=self.mission_id, requires_ack=True,
                 payload={"task_id": task.id, "verb": task.verb, "params": task.params,
                          "est_duration_s": task.est_duration_s}).to_json())
             v = self.view(task.assignee)
@@ -366,8 +445,17 @@ class Master:
         live rather than only at planning time."""
         if not self.spec:
             return
-        alive = {d.id for d in self.registry.all()
-                 if (st := self.world.drones.get(d.id)) and st.alive}
+        now = time.time()
+        alive = set()
+        for d in self.registry.all():
+            st = self.world.drones.get(d.id)
+            if st is not None and st.alive:
+                alive.add(d.id)
+            elif st is None and d.online and \
+                    now - self.last_seen.get(d.id, 0.0) <= HEARTBEAT_TIMEOUT_S:
+                # Standalone protocol drones have no mothership-side physics;
+                # heartbeat freshness is their liveness signal.
+                alive.add(d.id)
         surviving = Registry()
         for d in self.registry.all():
             if d.id in alive:
@@ -377,19 +465,42 @@ class Master:
         fresh = Planner(self.pack, surviving).plan(self.spec)
 
         if self.plan:
-            # keep progress already made, adopt the new verdict and gaps
-            done_ids = {t.id: t for t in self.plan.tasks if t.state == "DONE"}
-            for t in fresh.tasks:
-                if t.id in done_ids:
-                    t.state, t.progress = "DONE", 1.0
+            # Replace the graph with the fresh one so newly available support
+            # tasks (for example a relay inserted after a drone joins) appear.
+            # Preserve completed and in-flight work so a replan never sends a
+            # second drone to repeat an already-running task.
+            old = {t.id: t for t in self.plan.tasks}
+            for task in fresh.tasks:
+                previous = old.get(task.id)
+                if not previous:
+                    continue
+                task.progress = previous.progress
+                if previous.state == "DONE":
+                    task.state = previous.state
+                    task.assignee = previous.assignee
+                    task.assignee_name = previous.assignee_name
+                elif previous.state in ("ASSIGNED", "ACKED", "RUNNING"):
+                    provider = self.registry.get(previous.assignee) if previous.assignee else None
+                    provider_alive = bool(provider and provider.online)
+                    world_state = self.world.drones.get(previous.assignee) if previous.assignee else None
+                    if world_state is not None:
+                        provider_alive = world_state.alive
+                    if provider_alive:
+                        task.state = previous.state
+                        task.assignee = previous.assignee
+                        task.assignee_name = previous.assignee_name
+                    else:
+                        # The old execution disappeared with the vehicle.
+                        # Fresh planner binding already selected a survivor.
+                        task.state = "PENDING"
+                        task.progress = 0.0
+                elif previous.state == "FAILED":
+                    # A newly available provider gets one clean retry.
+                    task.state = "PENDING"
+            self.plan.tasks = fresh.tasks
             self.plan.verdict = fresh.verdict
             self.plan.gaps = fresh.gaps
             self.plan.notes = fresh.notes
-            for t in self.plan.tasks:
-                if t.state in ("PENDING", "ASSIGNED"):
-                    match = next((f for f in fresh.tasks if f.id == t.id), None)
-                    if match:
-                        t.assignee, t.assignee_name = match.assignee, match.assignee_name
 
         if verdict_before != fresh.verdict:
             await self.console("verdict", f"Re-validated after {why}: "
@@ -405,25 +516,31 @@ class Master:
         try:
             while True:
                 await asyncio.sleep(1.0)
-                if not self.mission_active:
-                    continue
                 now = time.time()
                 for rec in self.registry.all():
                     st = self.world.drones.get(rec.id)
-                    if not st:
+                    last = self.last_seen.get(rec.id, 0.0)
+                    silent = last > 0 and now - last > HEARTBEAT_TIMEOUT_S
+                    dead = st is not None and not st.alive
+                    if not st and not last:
                         continue
-                    silent = now - self.last_seen.get(rec.id, now) > HEARTBEAT_TIMEOUT_S
-                    if (not st.alive or silent) and not getattr(st, "_mourned", False):
-                        st._mourned = True          # type: ignore[attr-defined]
+                    if (dead or silent) and rec.online:
+                        if st is not None:
+                            st._mourned = True          # type: ignore[attr-defined]
+                        rec.online = False
                         v = self.view(rec.id)
                         v.phase, v.reason = "LOST", "no heartbeat"
                         v.task_id, v.verb = None, ""
+                        status = st.status.lower().replace("_", " ") if st else "external link silent"
                         await self.console("lost", f"{rec.name} ({rec.id}) is not responding "
-                                                   f"— {st.status.lower().replace('_',' ')}")
-                        if self.plan:
+                                                   f"— {status}")
+                        if self.plan and self.mission_active:
                             for t in self.plan.tasks:
                                 if t.assignee == rec.id and t.state in ("ASSIGNED", "ACKED", "RUNNING"):
                                     t.state = "FAILED"
-                        await self._replan_live(f"loss of {rec.name}")
+                        if self.mission_active:
+                            await self._replan_live(f"loss of {rec.name}")
+                        else:
+                            await self.push_plan()
         except asyncio.CancelledError:
             pass

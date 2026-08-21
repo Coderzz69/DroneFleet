@@ -11,6 +11,8 @@ from dataclasses import dataclass, field, asdict
 from typing import Any, Optional
 
 BROADCAST = "broadcast"
+PROTOCOL = "dronefleet"
+PROTOCOL_VERSION = "1.0"
 
 
 class MsgType:
@@ -26,6 +28,9 @@ class MsgType:
     HEARTBEAT = "HEARTBEAT"
     ABORT = "ABORT"
     RECALL = "RECALL"          # your part is done -- come home
+    AUTHORIZATION_REQUEST = "AUTHORIZATION_REQUEST"
+    AUTHORIZATION_GRANT = "AUTHORIZATION_GRANT"
+    AUTHORIZATION_DENY = "AUTHORIZATION_DENY"
 
 
 @dataclass
@@ -38,6 +43,10 @@ class Envelope:
     requires_ack: bool = False
     msg_id: str = field(default_factory=lambda: uuid.uuid4().hex[:12])
     ts: float = field(default_factory=time.time)
+    protocol: str = PROTOCOL
+    protocol_version: str = PROTOCOL_VERSION
+    mission_id: Optional[str] = None
+    expires_at: Optional[float] = None
 
     def to_json(self) -> bytes:
         return json.dumps(asdict(self)).encode()
