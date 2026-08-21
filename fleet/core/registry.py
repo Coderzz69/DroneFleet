@@ -39,6 +39,10 @@ class DroneRecord:
     constraints: Constraints = field(default_factory=Constraints)
     unmapped_text: list[str] = field(default_factory=list)
     source_text: str = ""
+    # Rich vendor/device information is carried opaquely so the planner stays
+    # domain-neutral while the mothership can still display and audit it.
+    metadata: dict[str, Any] = field(default_factory=dict)
+    online: bool = False
 
     def verbs(self) -> set[str]:
         return {c.verb for c in self.capabilities}
@@ -56,6 +60,37 @@ class DroneRecord:
         d = asdict(self)
         d["swath_m"] = round(self.swath_m(), 1)
         return d
+
+    @classmethod
+    def from_wire(cls, data: dict[str, Any]) -> "DroneRecord":
+        """Coerce a protocol manifest or legacy capability announcement."""
+        from ..protocol import manifest_from_dict
+
+        if "protocol" in data or "vehicle_type" in data:
+            return manifest_from_dict(data).to_record()
+
+        raw_constraints = data.get("constraints") or {}
+        constraints = Constraints(**{
+            k: float(v) for k, v in raw_constraints.items()
+            if k in Constraints.__dataclass_fields__ and isinstance(v, (int, float))
+        })
+        caps = []
+        for item in data.get("capabilities") or []:
+            if isinstance(item, str):
+                caps.append(Capability(item))
+            elif isinstance(item, dict) and item.get("verb"):
+                caps.append(Capability(str(item["verb"]), dict(item.get("params") or {})))
+        return cls(
+            id=str(data.get("id", "")),
+            name=str(data.get("name", data.get("id", "unknown"))),
+            capabilities=caps,
+            sensors=[str(s) for s in data.get("sensors") or []],
+            constraints=constraints,
+            unmapped_text=[str(x) for x in data.get("unmapped_text") or []],
+            source_text=str(data.get("source_text", "protocol announcement")),
+            metadata=dict(data),
+            online=True,
+        )
 
 
 class Registry:

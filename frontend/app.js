@@ -514,7 +514,7 @@ function render(){
   }
 
   // --- routes -------------------------------------------------------------
-  (w.drones||[]).forEach(d=>{
+  displayDrones().forEach(d=>{
     if(!d.waypoints||!d.waypoints.length||!d.alive) return;
     const sel = state.selected===d.id;
     ctx.save();
@@ -528,12 +528,12 @@ function render(){
   });
 
   // --- comms relay links --------------------------------------------------
-  (w.drones||[]).forEach(d=>{
+  displayDrones().forEach(d=>{
     if(!d.alive) return;
     let ax,ay;
     if(d.link_via==='direct'){ [ax,ay]=w2s(w.base.x,w.base.y); }
     else if(d.link_via&&d.link_via!=='none'){
-      const r=(w.drones||[]).find(o=>o.id===d.link_via); if(!r) return;
+      const r=displayDrones().find(o=>o.id===d.link_via); if(!r) return;
       [ax,ay]=w2s(r.x,r.y);
     } else return;
     const [bx,by]=w2s(d.x,d.y);
@@ -567,7 +567,7 @@ function render(){
   });
 
   // --- drones -------------------------------------------------------------
-  (w.drones||[]).forEach(d=>{
+  displayDrones().forEach(d=>{
     const [sx,sy]=w2s(d.x,d.y);
     const color=ROLE_COLOR[d.current_verb]||roleColorOf(d.id);
     const size=Math.max(20,t*2.0);
@@ -628,7 +628,7 @@ function render(){
   }
 
   if(state.follow&&state.selected){
-    const d=(w.drones||[]).find(x=>x.id===state.selected);
+    const d=displayDrones().find(x=>x.id===state.selected);
     if(d) centerOn(d.x,d.y);
   }
 
@@ -649,6 +649,38 @@ function roleColorOf(id){
   }
   return '#c8c8c8';
 }
+
+// The simulator owns full world state for local demo drones.  A real
+// protocol drone has no server-side physics object, so its position/task
+// state comes from the master's registry and received telemetry instead.
+// Merge both sources into one read-only view for the map and party panel.
+function displayDrones(){
+  const w=state.world||{};
+  const out=[...(w.drones||[])];
+  const ids=new Set(out.map(d=>d.id));
+  const base=w.base||{x:0,y:0};
+  (state.plan&&state.plan.fleet||[]).forEach(rec=>{
+    if(ids.has(rec.id)) return;
+    const mv=masterView(rec.id)||{};
+    const meta=rec.metadata||{}, initial=meta.state||{};
+    const alive=rec.online!==false && mv.phase!=='LOST';
+    const airborne=Boolean(mv.airborne) || ['ASSIGNED','ACKED','WORKING'].includes(mv.phase);
+    const target=(mv.target_x==null||mv.target_y==null)?[]:[{x:mv.target_x,y:mv.target_y}];
+    out.push({
+      id:rec.id, name:rec.name||rec.id,
+      x:mv.x==null?base.x:mv.x, y:mv.y==null?base.y:mv.y,
+      z:initial.altitude_m||0, heading_deg:mv.heading_deg||0,
+      speed_ms:mv.speed_ms||0, battery_pct:mv.battery_pct==null?
+        (initial.battery_pct==null?100:initial.battery_pct):mv.battery_pct,
+      alive, status:alive?(mv.phase||'ONLINE'):'LOST', airborne,
+      current_task:mv.task_id||null, current_verb:mv.verb||'',
+      next_task:null, next_verb:'', task_progress:mv.progress||0,
+      link_ok:mv.link_ok!==false, link_dbm:-80, link_via:mv.link_via||'direct',
+      swath_m:rec.swath_m||0, distance_km:0, waypoints:target, remote:true,
+    });
+  });
+  return out;
+}
 function regionOfPlan(){
   if(!state.plan||!state.plan.tasks) return null;
   for(const t of state.plan.tasks){ if(t.params&&t.params.region&&t.params.region.w) return t.params.region; }
@@ -661,7 +693,7 @@ canvas.addEventListener('click',e=>{
   const sx=e.clientX-r.left, sy=e.clientY-r.top;
   const w=state.world; if(!w) return;
   let best=null,bestD=1e9;
-  (w.drones||[]).forEach(d=>{
+  displayDrones().forEach(d=>{
     const [dx,dy]=w2s(d.x,d.y);
     const dist=Math.hypot(dx-sx,dy-sy);
     if(dist<bestD){bestD=dist;best=d;}
@@ -726,7 +758,7 @@ function select(id){
   state.selected=id;
   renderParty();
   if(id&&state.follow){
-    const d=(state.world.drones||[]).find(x=>x.id===id);
+    const d=displayDrones().find(x=>x.id===id);
     if(d) centerOn(d.x,d.y);
   }
 }
@@ -745,7 +777,7 @@ function barClass(p){ return p>50?'':(p>20?'warn':'crit'); }
 function renderParty(){
   const list=document.getElementById('party-list');
   const empty=document.getElementById('party-empty');
-  const drones=(state.world&&state.world.drones)||[];
+  const drones=displayDrones();
   empty.hidden = drones.length>0;
   list.innerHTML='';
 
@@ -781,7 +813,7 @@ function renderParty(){
 
 function renderSummary(){
   const box=document.getElementById('summary');
-  const d=(state.world&&state.world.drones||[]).find(x=>x.id===state.selected);
+  const d=displayDrones().find(x=>x.id===state.selected);
   if(!d){ box.hidden=true; return; }
   box.hidden=false;
 

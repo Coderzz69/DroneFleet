@@ -99,6 +99,13 @@ starts anyway and uses the deterministic parser. See
 See [section 17](#17-seeing-the-mqtt-working). Two tools ship with the project
 and need nothing installed.
 
+### External protocol drones
+
+The mothership can also accept independently launched drone processes over the
+versioned MQTT protocol. See [DRONE_PROTOCOL.md](DRONE_PROTOCOL.md) for the
+manifest fields, message lifecycle, safety boundary and commands for running
+reference drones in separate terminals.
+
 ---
 
 ## 3. The interface
@@ -867,9 +874,11 @@ tests/
 
 ### The protocol
 
-Every message uses one envelope: `msg_id`, `ts`, `src`, `dst`, `type`,
-`corr_id`, `requires_ack`, `payload`. `corr_id` is what ties an ACK, a progress
-report and a completion back to the original order.
+Every message uses one versioned envelope: `protocol`, `protocol_version`,
+`msg_id`, `ts`, `src`, `dst`, `type`, `mission_id`, `corr_id`, `requires_ack`,
+`expires_at`, and `payload`. `corr_id` is what ties an ACK, a progress report
+and a completion back to the original order. See [DRONE_PROTOCOL.md](DRONE_PROTOCOL.md)
+for the full manifest and interoperability contract.
 
 | Type | Meaning |
 |---|---|
@@ -878,6 +887,7 @@ report and a completion back to the original order.
 | `TASK_PROGRESS` / `TASK_COMPLETE` | Execution |
 | `TELEMETRY` / `HEARTBEAT` / `ALERT` | Housekeeping |
 | `RECALL` / `ABORT` | Come home / stop now |
+| `AUTHORIZATION_REQUEST` / `AUTHORIZATION_GRANT` / `AUTHORIZATION_DENY` | Explicit human approval boundary |
 
 Task states: `PENDING → ASSIGNED → ACKED → RUNNING → DONE`, with `FAILED` and
 `ABORTED` as exits.
@@ -886,11 +896,11 @@ Task states: `PENDING → ASSIGNED → ACKED → RUNNING → DONE`, with `FAILED
 
 | Topic | Direction |
 |---|---|
-| `fleet/broadcast` | master → all drones |
-| `fleet/drone/{id}/inbox` | master → one drone |
-| `fleet/master/inbox` | drones → master |
-| `fleet/drone/{id}/telemetry` | drone → master and observers |
-| `fleet/mission/plan`, `fleet/console` | runtime → UI (retained) |
+| `fleet/v1/broadcast` | master → all drones |
+| `fleet/v1/drone/{id}/inbox` | master → one drone |
+| `fleet/v1/master/inbox` | drones → master |
+| `fleet/v1/drone/{id}/telemetry` | drone → master and observers |
+| `fleet/v1/mission/plan`, `fleet/v1/console` | runtime → UI (retained) |
 
 ### Physics
 
@@ -914,8 +924,9 @@ cost a lot and change nothing about the protocol, which is the point.
 ## 15. Tests
 
 ```
-python3 -m tests.test_planner       # 24 assertions, no AI / network / UI
-python3 -m tests.test_integration   # 18 assertions, real broker + real physics
+python3 -m tests.test_planner       # planner/physics assertions, no AI / network / UI
+python3 -m tests.test_integration   # real broker + real physics
+python3 -m tests.test_remote_protocol # standalone manifest + remote tasking
 python3 -m tests.test_llm           # 28 assertions, real Ollama (skips if absent)
 
 FLEET_LLM_MODEL=qwen2.5:1.5b-instruct python3 -m tests.test_llm
