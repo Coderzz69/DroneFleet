@@ -1,0 +1,359 @@
+/* DroneFleet — GBA-era overworld chrome.
+   Palette borrowed from the Game Boy Advance Pokémon games: saturated grass
+   greens, a deep navy UI frame, and the cream dialogue box with its double
+   border. Everything is hard-edged: no gradients, no blur, no antialiasing. */
+
+:root{
+  --gb-navy:#182848;
+  --gb-navy-2:#101c34;
+  --gb-blue:#3860a8;
+  --gb-blue-lt:#6890d8;
+  --gb-cream:#f8f8f0;
+  --gb-cream-2:#e8e8d8;
+  --gb-ink:#383838;
+  --gb-shadow:#a8a8a0;
+
+  --gb-red:#d84848;
+  --gb-yellow:#f8d030;
+  --gb-green:#48b048;
+  --gb-teal:#48c8c0;
+  --gb-purple:#9868d8;
+
+  --px:4px;
+  --font:"Press Start 2P","Courier New",ui-monospace,monospace;
+}
+
+*{box-sizing:border-box;}
+
+html,body{
+  margin:0; padding:0; height:100%;
+  background:var(--gb-navy-2);
+  color:var(--gb-cream);
+  font-family:var(--font);
+  font-size:8px;
+  line-height:1.8;
+  overflow:hidden;
+  image-rendering:pixelated;
+  -webkit-font-smoothing:none;
+}
+
+#app{
+  height:100%;
+  display:grid;
+  grid-template-columns:minmax(0,1fr) 340px;
+  grid-template-rows:minmax(0,1fr) 232px;
+  grid-template-areas:"stage side" "dialogue dialogue";
+  gap:8px;
+  padding:8px;
+}
+
+/* ---------------- overworld stage ---------------- */
+#stage{
+  grid-area:stage;
+  position:relative;
+  background:#000;
+  border:var(--px) solid var(--gb-navy);
+  outline:var(--px) solid #000;
+  outline-offset:0;
+  overflow:hidden;
+  min-width:0; min-height:0;
+}
+#map{
+  display:block;
+  width:100%; height:100%;
+  image-rendering:pixelated;
+  cursor:crosshair;
+}
+
+/* ---------------- in-game HUD ---------------- */
+.hud{position:absolute;z-index:3;display:flex;gap:6px;pointer-events:none;}
+/* a class selector beats the UA [hidden] rule, so restate it explicitly */
+.hud[hidden],.summary[hidden],.empty[hidden]{display:none;}
+.hud-top{top:8px;left:8px;}
+.hud-box{
+  background:var(--gb-cream);
+  color:var(--gb-ink);
+  border:3px solid var(--gb-navy);
+  box-shadow:0 3px 0 #0006;
+  padding:5px 8px;
+  font-size:8px;
+  letter-spacing:.5px;
+}
+.hud-box b{color:var(--gb-blue);}
+
+.hud-tools{top:8px;right:8px;pointer-events:auto;}
+.gb-btn{
+  font-family:var(--font);
+  font-size:8px;
+  background:var(--gb-cream);
+  color:var(--gb-ink);
+  border:3px solid var(--gb-navy);
+  box-shadow:0 3px 0 #0006;
+  padding:5px 7px;
+  cursor:pointer;
+}
+.gb-btn:hover{background:var(--gb-yellow);}
+.gb-btn:active{transform:translateY(2px);box-shadow:0 1px 0 #0006;}
+.gb-btn:focus-visible{outline:3px solid var(--gb-teal);outline-offset:2px;}
+
+.hud-hint{
+  bottom:8px;left:8px;
+  font-size:8px;
+  color:#ffffffcc;
+  text-shadow:2px 2px 0 #000;
+  letter-spacing:1px;
+}
+
+/* verdict banner, centred like a battle message */
+.hud-verdict{
+  top:50%; left:50%;
+  transform:translate(-50%,-50%);
+  z-index:5;
+}
+.verdict-inner{
+  background:var(--gb-cream);
+  border:4px solid var(--gb-navy);
+  box-shadow:0 0 0 4px #000, 0 8px 0 #0007;
+  padding:16px 26px;
+  font-size:16px;
+  letter-spacing:2px;
+  color:var(--gb-ink);
+  animation:pop .18s steps(3);
+}
+@keyframes pop{from{transform:scale(.7);}to{transform:scale(1);}}
+.verdict-inner.v-FEASIBLE{color:#2a7a2a;}
+.verdict-inner.v-DEGRADED{color:#9a6a08;}
+.verdict-inner.v-INSUFFICIENT{color:#b02828;}
+
+/* ---------------- right column ---------------- */
+#side{
+  grid-area:side;
+  min-height:0;
+  display:flex; flex-direction:column;
+  gap:6px;
+}
+.tabs{display:flex;gap:4px;flex:0 0 auto;}
+.tab{
+  flex:1;
+  font-family:var(--font);
+  font-size:8px;
+  padding:8px 2px;
+  background:var(--gb-navy);
+  color:#8fa8d0;
+  border:3px solid #000;
+  border-bottom:none;
+  cursor:pointer;
+}
+.tab.active{background:var(--gb-cream);color:var(--gb-ink);}
+.tab:focus-visible{outline:3px solid var(--gb-teal);}
+
+.panel{
+  display:none;
+  flex:1 1 auto;
+  min-height:0;
+  overflow-y:auto;
+  overflow-x:hidden;
+  background:var(--gb-navy);
+  border:3px solid #000;
+  padding:8px;
+}
+.panel.active{display:block;}
+.panel::-webkit-scrollbar{width:10px;}
+.panel::-webkit-scrollbar-track{background:var(--gb-navy-2);}
+.panel::-webkit-scrollbar-thumb{background:var(--gb-blue);border:2px solid var(--gb-navy-2);}
+
+.empty{
+  color:#7f96bd;
+  font-size:8px;
+  line-height:2;
+  padding:14px 6px;
+  text-align:center;
+}
+.empty b{color:var(--gb-yellow);}
+
+/* --------- party list: drones as party members with HP bars --------- */
+.party-list{display:flex;flex-direction:column;gap:6px;}
+.party-card{
+  display:grid;
+  grid-template-columns:34px minmax(0,1fr);
+  gap:8px;
+  align-items:center;
+  background:var(--gb-cream);
+  color:var(--gb-ink);
+  border:3px solid #000;
+  box-shadow:inset 0 0 0 2px var(--gb-cream-2);
+  padding:7px;
+  cursor:pointer;
+}
+.party-card:hover{background:#fff;}
+.party-card.sel{background:var(--gb-yellow);box-shadow:inset 0 0 0 2px #fff, 0 0 0 3px var(--gb-teal);}
+.party-card.dead{background:var(--gb-shadow);color:#4a4a4a;}
+.party-card canvas{display:block;width:32px;height:32px;image-rendering:pixelated;}
+.pc-name{font-size:8px;display:flex;justify-content:space-between;gap:6px;}
+.pc-name em{font-style:normal;color:var(--gb-blue);font-size:8px;}
+.pc-role{font-size:8px;color:#666;margin:3px 0 4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+
+/* HP-style bar */
+.bar{
+  height:9px;
+  background:#585858;
+  border:2px solid var(--gb-ink);
+  padding:1px;
+}
+.bar span{display:block;height:100%;background:var(--gb-green);transition:width .25s steps(6);}
+.bar.warn span{background:var(--gb-yellow);}
+.bar.crit span{background:var(--gb-red);}
+.bar-label{font-size:8px;color:#555;margin-top:3px;display:flex;justify-content:space-between;}
+
+/* --------- summary screen --------- */
+.summary{
+  margin-top:10px;
+  background:var(--gb-cream);
+  color:var(--gb-ink);
+  border:3px solid #000;
+  box-shadow:inset 0 0 0 2px var(--gb-cream-2);
+  padding:10px;
+}
+.sum-head{
+  display:flex;align-items:center;gap:10px;
+  border-bottom:3px solid var(--gb-ink);
+  padding-bottom:8px;margin-bottom:8px;
+}
+.sum-head canvas{width:44px;height:44px;image-rendering:pixelated;}
+.sum-title{font-size:16px;}
+.sum-id{font-size:8px;color:#777;margin-top:4px;}
+.sum-section{
+  font-size:8px;color:#fff;background:var(--gb-blue);
+  padding:3px 6px;margin:10px 0 6px;letter-spacing:1px;
+}
+.kv{display:grid;grid-template-columns:auto 1fr;gap:3px 8px;font-size:8px;}
+.kv dt{color:#6a6a6a;}
+.kv dd{margin:0;text-align:right;font-variant-numeric:tabular-nums;}
+.chips{display:flex;flex-wrap:wrap;gap:4px;}
+.chip{
+  font-size:8px;background:var(--gb-blue);color:#fff;
+  padding:3px 5px;border:2px solid var(--gb-navy);
+}
+.chip.sensor{background:var(--gb-purple);}
+.chip.off{background:var(--gb-shadow);color:#333;}
+.objective{
+  border:2px solid var(--gb-ink);
+  padding:6px;margin-bottom:6px;
+  font-size:8px;
+  background:#fff;
+}
+.objective .lbl{font-size:8px;color:#777;display:block;margin-bottom:3px;}
+.objective.next{background:var(--gb-cream-2);}
+.objective b{color:var(--gb-blue);}
+.prog{height:7px;background:#585858;border:2px solid var(--gb-ink);margin-top:5px;padding:1px;}
+.prog span{display:block;height:100%;background:var(--gb-teal);}
+
+/* --------- mission tree --------- */
+.mission-body{font-size:8px;}
+.m-goal{
+  background:var(--gb-cream);color:var(--gb-ink);
+  border:3px solid #000;padding:7px;margin-bottom:8px;font-size:8px;
+}
+.m-goal b{color:var(--gb-blue);}
+.task{
+  background:var(--gb-cream);color:var(--gb-ink);
+  border:3px solid #000;border-left-width:8px;
+  padding:6px 7px;margin-bottom:5px;
+}
+.task.PENDING{border-left-color:var(--gb-shadow);}
+.task.ASSIGNED,.task.ACKED{border-left-color:var(--gb-yellow);}
+.task.RUNNING{border-left-color:var(--gb-teal);}
+.task.DONE{border-left-color:var(--gb-green);}
+.task.FAILED,.task.ABORTED{border-left-color:var(--gb-red);}
+.t-top{display:flex;justify-content:space-between;gap:6px;font-size:8px;}
+.t-state{font-size:8px;color:#777;}
+.t-meta{font-size:8px;color:#666;margin-top:4px;}
+.t-note{font-size:8px;color:#8a5a00;margin-top:4px;}
+.gapbox{
+  border:3px solid #000;padding:7px;margin-bottom:5px;font-size:8px;
+  background:#f4dcd8;color:#5a1f18;
+}
+.gapbox.degraded{background:#f6ecd2;color:#5a4110;}
+.gapbox b{display:block;margin-bottom:3px;}
+.gapbox i{display:block;margin-top:4px;font-style:normal;color:#333;}
+
+/* --------- protocol log --------- */
+.wire-tools{display:flex;gap:5px;margin-bottom:8px;}
+.wire-tools .gb-btn{flex:1;}
+.wire-log{font-size:8px;line-height:1.9;}
+.wire-row{
+  display:grid;grid-template-columns:52px 1fr;gap:6px;
+  padding:3px 0;border-bottom:1px solid #ffffff14;
+}
+.wire-t{color:#5f7ba8;font-variant-numeric:tabular-nums;}
+.wire-type{color:var(--gb-yellow);}
+.wire-body{color:#c8d8f0;word-break:break-word;}
+.wire-body .src{color:var(--gb-teal);}
+
+/* ---------------- dialogue box ---------------- */
+#dialogue{grid-area:dialogue;min-height:0;}
+.gb-frame{
+  height:100%;
+  background:var(--gb-cream);
+  border:4px solid var(--gb-navy);
+  box-shadow:inset 0 0 0 4px var(--gb-cream), inset 0 0 0 7px var(--gb-blue-lt);
+  padding:14px 18px 10px;
+  display:flex;flex-direction:column;
+  color:var(--gb-ink);
+}
+.log{
+  flex:1 1 auto;
+  overflow-y:auto;
+  font-size:8px;
+  line-height:1.95;
+  padding-right:8px;
+}
+.log::-webkit-scrollbar{width:10px;}
+.log::-webkit-scrollbar-track{background:var(--gb-cream-2);}
+.log::-webkit-scrollbar-thumb{background:var(--gb-blue-lt);border:2px solid var(--gb-cream-2);}
+.line{margin:0 0 2px;word-break:break-word;}
+.line.you{color:var(--gb-blue);}
+.line.you::before{content:"› ";}
+.line.system,.line.help{color:#6a6a6a;}
+.line.register,.line.done,.line.fleet{color:#1f7a2f;}
+.line.error,.line.reject,.line.lost,.line.gap{color:#b02828;}
+.line.warn,.line.suggest,.line.fault{color:#8a5a00;}
+.line.assign,.line.plan,.line.mission{color:#2a4fa8;}
+.line.contact,.line.link,.line.note{color:#6a3fa8;}
+.line.verdict{font-size:16px;letter-spacing:1px;}
+.line.verdict.FEASIBLE{color:#1f7a2f;}
+.line.verdict.DEGRADED{color:#8a5a00;}
+.line.verdict.INSUFFICIENT{color:#b02828;}
+
+.prompt-row{
+  flex:0 0 auto;
+  display:flex;align-items:center;gap:8px;
+  border-top:3px solid var(--gb-shadow);
+  margin-top:8px;padding-top:10px;
+}
+.caret{color:var(--gb-blue);font-size:8px;}
+#input{
+  flex:1;
+  font-family:var(--font);
+  font-size:8px;
+  color:var(--gb-ink);
+  background:transparent;
+  border:none;
+  outline:none;
+  padding:2px 0;
+}
+#input::placeholder{color:#a8a8a0;}
+.blink{color:var(--gb-blue);animation:blink 1s steps(2,end) infinite;}
+@keyframes blink{50%{opacity:0;}}
+
+@media (prefers-reduced-motion:reduce){
+  *{animation:none!important;transition:none!important;}
+}
+
+@media (max-width:1080px){
+  #app{
+    grid-template-columns:minmax(0,1fr);
+    grid-template-rows:minmax(0,1fr) 240px 190px;
+    grid-template-areas:"stage" "side" "dialogue";
+  }
+}

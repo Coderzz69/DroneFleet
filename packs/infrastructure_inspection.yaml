@@ -1,0 +1,40 @@
+domain: infrastructure_inspection
+keywords: [inspect, inspection, pipeline, powerline, power line, bridge, turbine, corrosion, crack, leak, survey, asset, tower]
+
+verbs:
+  area_search:
+    requires: [region]
+    produces: [contacts]
+    sensors_any: [rgb, thermal, lidar]
+    duration_per_km2: 2.0
+    fixed_duration_s: 25
+    description: Fly the asset corridor and log anomalies
+
+  classify_defect:
+    requires: [contacts]
+    produces: [defect_confirmed]
+    sensors_any: [rgb, lidar]
+    fixed_duration_s: 30
+    description: Close-in imaging to confirm a crack, leak or corrosion
+
+  measure_defect:
+    requires: [defect_confirmed]
+    produces: [defect_measured]
+    sensors_any: [lidar]
+    fixed_duration_s: 35
+    description: Dimension the defect for the maintenance report
+
+  file_report:
+    requires: [defect_measured]
+    produces: [report_filed]
+    fixed_duration_s: 15
+    description: Package findings and upload
+
+policies:
+  - id: measure_before_report
+    applies_to: file_report
+    kind: fresh
+    token: defect_measured
+    ttl_s: 1800
+    severity: blocking
+    message: A report cannot be filed on an unmeasured defect

@@ -1,0 +1,84 @@
+# ---------------------------------------------------------------- Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# packaging / build output
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# ---------------------------------------------------------- environments
+.venv/
+venv/
+env/
+ENV/
+.python-version
+
+# ------------------------------------------------------------ test tools
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+
+# ------------------------------------------------------- DroneFleet local
+# The app itself writes nothing into the repo, but running it by hand tends
+# to leave these behind.
+# run.py / `ollama serve` output when redirected into the checkout
+*.log
+logs/
+# UI captures. Drop these two lines if you start committing docs images.
+screenshots/
+*.png
+*.jpg
+
+# Local model weights or an Ollama install dropped inside the checkout.
+# Neither belongs in git: the tarball is ~1.4 GB and gemma2:2b is ~1.6 GB.
+ollama/
+models/
+*.gguf
+*.tar.zst
+
+# Local-only overrides (ports, model tag, MQTT host) if you add any.
+.env
+.env.*
+!.env.example
+local_settings.py
+
+# Custom domain packs you are not ready to share.
+# Commit the pack when it is ready; the three shipped packs are tracked.
+packs/*.local.yaml
+
+# ------------------------------------------------------------- JS tooling
+# The frontend is dependency-free vanilla JS by design, but linters/formatters
+# run via npx will still create these.
+node_modules/
+package-lock.json
+.npm/
+
+# ---------------------------------------------------------------- editors
+# Keep shared VS Code settings, ignore per-user state.
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+!.vscode/launch.json
+.idea/
+*.swp
+*.swo
+*~
+.\#*
+\#*\#
+
+# --------------------------------------------------------------------- OS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+Thumbs.db
+Desktop.ini

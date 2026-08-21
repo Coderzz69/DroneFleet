@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DroneFleet</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div id="app">
+
+  <!-- ================= main window : the overworld ================= -->
+  <main id="stage">
+    <canvas id="map"></canvas>
+
+    <!-- top status strip, drawn like an in-game HUD -->
+    <div class="hud hud-top">
+      <div class="hud-box" id="hud-domain">DOMAIN <b>—</b></div>
+      <div class="hud-box" id="hud-wind">WIND <b>—</b></div>
+      <div class="hud-box" id="hud-clock">T+<b>0</b></div>
+    </div>
+
+    <div class="hud hud-verdict" id="verdict-badge" hidden>
+      <div class="verdict-inner"><span id="verdict-text">FEASIBLE</span></div>
+    </div>
+
+    <div class="hud hud-hint" id="map-hint">CLICK A DRONE FOR ITS SUMMARY</div>
+
+    <div class="hud hud-tools">
+      <button class="gb-btn" id="btn-follow" title="Camera follows the selected drone">FOLLOW: OFF</button>
+      <button class="gb-btn" id="btn-zoomin">+</button>
+      <button class="gb-btn" id="btn-zoomout">&minus;</button>
+      <button class="gb-btn" id="btn-fog">FOG: ON</button>
+    </div>
+  </main>
+
+  <!-- ================= right column : party / protocol / mission ================= -->
+  <aside id="side">
+    <nav class="tabs">
+      <button class="tab active" data-tab="party">PARTY</button>
+      <button class="tab" data-tab="mission">MISSION</button>
+      <button class="tab" data-tab="wire">PROTOCOL</button>
+    </nav>
+
+    <section class="panel active" id="panel-party">
+      <div id="party-list" class="party-list"></div>
+      <div id="summary" class="summary" hidden></div>
+      <div id="party-empty" class="empty">
+        NO DRONES.<br><br>TYPE <b>demo</b> IN THE BOX BELOW TO LOAD A THREE-DRONE RESCUE TEAM,
+        OR DESCRIBE ONE WITH <b>add …</b>
+      </div>
+    </section>
+
+    <section class="panel" id="panel-mission">
+      <div id="mission-body" class="mission-body">
+        <div class="empty">NO MISSION EVALUATED YET.</div>
+      </div>
+    </section>
+
+    <section class="panel" id="panel-wire">
+      <div class="wire-tools">
+        <button class="gb-btn" id="btn-hb">HEARTBEATS: OFF</button>
+        <button class="gb-btn" id="btn-clearwire">CLEAR</button>
+      </div>
+      <div id="wire-log" class="wire-log"></div>
+    </section>
+  </aside>
+
+  <!-- ================= bottom : the dialogue box ================= -->
+  <footer id="dialogue">
+    <div class="gb-frame">
+      <div id="log" class="log" role="log" aria-live="polite"></div>
+      <div class="prompt-row">
+        <span class="caret">&#9654;</span>
+        <input id="input" type="text" autocomplete="off" spellcheck="false"
+               placeholder="describe a drone, or give the fleet a mission…" aria-label="command">
+        <span class="blink">&#9660;</span>
+      </div>
+    </div>
+  </footer>
+
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>

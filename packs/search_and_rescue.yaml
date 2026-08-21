@@ -1,0 +1,45 @@
+domain: search_and_rescue
+keywords: [rescue, survivor, survivors, flood, earthquake, missing, casualty, medical, supplies, disaster, stranded, victim]
+
+verbs:
+  area_search:
+    requires: [region]
+    produces: [contacts]
+    sensors_any: [thermal, eo_ir, rgb]
+    duration_per_km2: 1.4
+    fixed_duration_s: 30
+    description: Sweep the region for heat signatures and movement
+
+  classify_survivor:
+    requires: [contacts]
+    produces: [survivor_confirmed]
+    sensors_any: [thermal, eo_ir]
+    fixed_duration_s: 25
+    description: Confirm a contact is a live person, not debris
+
+  deliver_payload:
+    requires: [survivor_confirmed]
+    produces: [supplies_delivered]
+    fixed_duration_s: 40
+    description: Fly to the confirmed survivor and release the payload
+
+  guide_ground_team:
+    requires: [survivor_confirmed]
+    produces: [extraction_started]
+    fixed_duration_s: 60
+    description: Mark the location and talk a ground team in
+
+policies:
+  - id: confirm_before_delivery
+    applies_to: deliver_payload
+    kind: fresh
+    token: survivor_confirmed
+    ttl_s: 600
+    severity: blocking
+    message: A payload drop is locked until a survivor is confirmed and the confirmation is under 10 minutes old
+
+  - id: comms_required
+    applies_to: area_search
+    kind: requires_link
+    severity: degraded
+    message: Searching beyond radio range means results arrive only after the drone flies home

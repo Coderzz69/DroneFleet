@@ -1,0 +1,46 @@
+domain: perimeter_security
+keywords: [perimeter, intruder, security, patrol, breach, hostile, unauthorised, unauthorized, trespass, intercept, guard]
+
+verbs:
+  area_search:
+    requires: [region]
+    produces: [contacts]
+    sensors_any: [thermal, eo_ir, radar]
+    duration_per_km2: 1.1
+    fixed_duration_s: 25
+    description: Patrol the sector and report movement
+
+  classify_iff:
+    requires: [contacts]
+    produces: [iff_clearance]
+    sensors_any: [eo_ir, thermal]
+    fixed_duration_s: 30
+    description: Identify friend or foe before anything else may act
+
+  intercept:
+    requires: [iff_clearance]
+    produces: [intercept_started]
+    fixed_duration_s: 45
+    description: Shadow and deter the classified contact
+
+  assess:
+    requires: [contacts]
+    produces: [assessment]
+    sensors_any: [eo_ir, rgb]
+    fixed_duration_s: 20
+    description: After-action assessment of the sector
+
+policies:
+  - id: iff_before_intercept
+    applies_to: intercept
+    kind: fresh
+    token: iff_clearance
+    ttl_s: 300
+    severity: blocking
+    message: Intercept is locked until a friend-or-foe clearance exists and is under 5 minutes old
+
+  - id: link_for_intercept
+    applies_to: intercept
+    kind: requires_link
+    severity: degraded
+    message: An intercept without a live radio link cannot be recalled mid-run
