@@ -28,6 +28,7 @@ import urllib.request
 from typing import Any, Optional
 
 from . import nlp
+from .nlp import HAZARDS
 from .ontology import Pack
 
 log = logging.getLogger("llm")
@@ -275,6 +276,9 @@ report. An order that just says to search is a search.
 - direction: the compass word used to describe where the area is, or "center" \
 if none is given.
 - area_km2: only if a size is stated, else null.
+- hazard: the environment the incident is happening in, if the order names one
+  (a flood, a fire, an earthquake, a storm, a chemical release). "none" if the
+  order does not describe one. Never guess a disaster that is not mentioned.
 Never invent a location. If the order does not say where, use direction \
 "center" and null grid."""
 
@@ -286,6 +290,7 @@ Never invent a location. If the order does not say where, use direction \
                 "grid": {"type": ["string", "null"]},
                 "direction": {"type": "string", "enum": DIRECTIONS},
                 "area_km2": {"type": ["number", "null"]},
+                "hazard": {"type": "string", "enum": HAZARDS},
             },
             "required": ["goal_verb", "direction"],
         }

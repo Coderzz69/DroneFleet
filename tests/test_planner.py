@@ -8,7 +8,9 @@ from __future__ import annotations
 import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from fleet.core.nlp import parse_drone, parse_mission
+from fleet.agents.drone import DroneAgent
+from fleet.core.nlp import detect_hazard, parse_drone, parse_mission
+from fleet.sim.world import World
 from fleet.core.ontology import load_pack
 from fleet.core.planner import DEGRADED, FEASIBLE, INSUFFICIENT, Planner
 from fleet.core.registry import Registry
@@ -127,6 +129,45 @@ def main():
 
     m = parse_mission("sweep grid B7 for survivors", sar)
     check("grid ref parsed", (round(m.region["x"]), round(m.region["y"])), (1260, 8460))
+
+    print("\nhazards (scene-setting, never feasibility)")
+    for text, want in [("find survivors in the north flood zone", "flood"),
+                       ("search the burning warehouse for casualties", "fire"),
+                       ("rescue people trapped in rubble after the earthquake", "earthquake"),
+                       ("survey the coast during the storm", "storm"),
+                       ("check the toxic spill area", "chemical"),
+                       ("patrol sector D5 for intruders", "")]:
+        check(f"{want or '(none)':11} <- {text[:34]}", detect_hazard(text), want)
+    check("hazard reaches the spec",
+          parse_mission("find survivors in the north flood zone", sar).hazard, "flood")
+    check("a mission with no disaster names none",
+          parse_mission("search grid B3 for casualties", sar).hazard, "")
+
+    print("\ncontact ground truth is hidden until classified")
+    w = World()
+    region = {"x": 0, "y": 0, "w": 1000, "h": 1000}
+    w.seed_contacts(region, 4, "perimeter_security")
+    check("security seeds both sides",
+          {c["truth"] for c in w.contacts}, {"hostile", "friendly"})
+    w.seed_contacts(region, 3, "search_and_rescue")
+    check("rescue seeds survivors", w.contacts[0]["truth"], "survivor")
+    snap = w.snapshot()
+    check("nothing is classified up front",
+          {c["kind"] for c in snap["contacts"]}, {"unknown"})
+    check("ground truth never reaches the UI",
+          any("truth" in c for c in snap["contacts"]), False)
+    w.set_hazard("flood", region)
+    check("hazard is published", w.snapshot()["hazard"]["kind"], "flood")
+
+    print("\nclassification can say no")
+    check("intercept acts on a hostile",
+          DroneAgent._actionable("intercept", {"kind": "hostile"}), True)
+    check("intercept refuses a friendly",
+          DroneAgent._actionable("intercept", {"kind": "friendly"}), False)
+    check("delivery serves a survivor",
+          DroneAgent._actionable("deliver_payload", {"kind": "survivor"}), True)
+    check("delivery skips a hostile",
+          DroneAgent._actionable("deliver_payload", {"kind": "hostile"}), False)
 
     print(f"\n  {PASS} passed, {FAIL} failed\n")
     return 1 if FAIL else 0

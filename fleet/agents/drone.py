@@ -168,7 +168,9 @@ class DroneAgent:
                 target = ct
                 break
             if verb in ("deliver_payload", "intercept", "guide_ground_team",
-                        "measure_defect", "file_report", "assess") and ct["classified"] and not ct["served"]:
+                        "measure_defect", "file_report", "assess") \
+                    and ct["classified"] and not ct["served"] \
+                    and self._actionable(verb, ct):
                 target = ct
                 break
         if target:
@@ -229,6 +231,17 @@ class DroneAgent:
         except asyncio.CancelledError:
             pass
 
+    @staticmethod
+    def _actionable(verb: str, contact: dict) -> bool:
+        """A classification is only useful if it can say no. Identifying a
+        contact as friendly must stop an intercept, or the interlock is
+        theatre -- it would gate on timing and never on the answer."""
+        if verb == "intercept":
+            return contact.get("kind") != "friendly"
+        if verb in ("deliver_payload", "guide_ground_team"):
+            return contact.get("kind") in ("survivor", "friendly", "unknown")
+        return True
+
     def _result_for(self, verb: str) -> dict:
         """Produce the token this verb is contracted to produce."""
         w = self.world
@@ -238,15 +251,17 @@ class DroneAgent:
         if verb.startswith("classify"):
             for ct in w.contacts:
                 if ct["found"] and not ct["classified"]:
+                    # reveal the ground truth seeded with the contact. This is
+                    # the whole point of a classify step: before it runs nobody
+                    # knows whether that heat signature is a survivor or a goat.
                     ct["classified"] = True
-                    ct["kind"] = "survivor" if "survivor" in verb else (
-                        "hostile" if "iff" in verb else "defect")
+                    ct["kind"] = ct.get("truth") or "survivor"
                     return {"contact": ct["id"], "kind": ct["kind"],
                             "issued_at": time.time(), "ttl_s": 600}
             return {"contact": None}
         if verb in ("deliver_payload", "intercept", "guide_ground_team", "file_report"):
             for ct in w.contacts:
-                if ct["classified"] and not ct["served"]:
+                if ct["classified"] and not ct["served"] and self._actionable(verb, ct):
                     ct["served"] = True
                     return {"contact": ct["id"], "action": verb}
             return {"contact": None}

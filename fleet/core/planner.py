@@ -69,6 +69,7 @@ class MissionSpec:
     """What the operator asked for, in structured form."""
     goal_verb: str
     region: dict[str, float] = field(default_factory=dict)   # x, y, w, h in metres
+    hazard: str = ""            # flood | fire | earthquake | storm | chemical
     raw: str = ""
 
     def area_km2(self) -> float:

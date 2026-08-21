@@ -136,8 +136,58 @@ What you are looking at:
   yellow means it is going through a relay drone.
 - **Red pulsing ring** — that drone has lost its radio link.
 - **White dashed path** — the drone's remaining waypoints.
-- **`!` over a figure** — a detected contact not yet classified.
 - **Grey drone** — lost (killed, or battery dead).
+
+### Contacts: two independent axes
+
+A contact's **kind** (what it is) and its **stage** (how far through the
+pipeline it is) are encoded separately, so you can read either without
+decoding the other.
+
+**Kind sets hue and silhouette:**
+
+| Kind | Marker |
+|---|---|
+| Unknown | grey hollow circle with `?` |
+| Survivor | amber civilian figure |
+| Friendly | green civilian figure |
+| Hostile | red angular spike, dark core |
+| Defect | yellow hazard diamond on the asset — not a person |
+
+**Stage sets how solidly it is painted:**
+
+| Stage | Painting |
+|---|---|
+| Found, unclassified | outline only, grey, bobbing `!` — identity genuinely unknown |
+| Classified | tinted in its kind colour, labelled |
+| Served | solid fill plus a white tick |
+
+Before a classify task runs, *every* kind draws as the same hollow `?`. That is
+the point: the ground truth exists server-side but is never sent to the browser
+until a drone has actually identified it. A legend appears bottom-left listing
+only the kinds currently on the map.
+
+Classification can also say **no**. A contact identified as friendly is skipped
+by `intercept`, and a hostile is skipped by `deliver_payload` — so the IFF
+interlock gates on the answer, not merely on timing.
+
+### Hazards
+
+If the mission order names a disaster, the incident area is drawn as one:
+
+| Hazard | Wording that triggers it | Appearance |
+|---|---|---|
+| `flood` | flood, inundated, submerged, dam burst, tsunami | standing water with moving wave crests |
+| `fire` | fire, wildfire, blaze, burning, smoke | burnt ground, flames, rising smoke |
+| `earthquake` | earthquake, quake, rubble, collapsed, landslide | rubble heaps and ground fissures |
+| `storm` | storm, hurricane, cyclone, blizzard, gale | driving rain and lightning flashes |
+| `chemical` | chemical, hazmat, toxic, contaminated | drifting acid-green cloud on violet |
+
+Hazards are **scene-setting only** — they never affect feasibility, task
+timing, or physics. The verdict for "find survivors in the flood zone" is
+identical to the same mission without the word "flood". They exist so the
+operator can see the situation they were sent into, and so the unswept fog
+lightens automatically to keep both readable.
 
 ### PARTY panel
 
@@ -300,6 +350,8 @@ The app responds best when a prompt names:
 - the **objective**: search, confirm/classify, deliver, intercept, measure,
   report, guide
 - the **area**: a compass direction, a grid reference, or an approximate size
+- optionally the **hazard**: flood, fire, earthquake, storm or chemical, which
+  is drawn on the map
 
 ### Rescue
 
@@ -382,6 +434,30 @@ Keywords that steer the inference:
 
 When a prompt is ambiguous, set it explicitly with `domain <name>` before the
 mission prompt.
+
+### Switching domain re-reads the fleet
+
+A capability record only means something relative to a pack, so when the domain
+changes every registered drone is re-read from the description you originally
+typed:
+
+```
+> domain perimeter_security
+  Spotter re-read for perimeter_security: [classify_survivor, loiter] → [classify_iff, loiter]
+```
+
+This matters because you usually register drones *before* the mission prompt
+that selects the domain. Without it, a drone registered under the default
+rescue pack would sit there holding verbs the new domain does not define.
+
+If a description has no capability in the current pack but another pack would
+understand it, the error says which:
+
+```
+> add a drone that intercepts intruders
+  No search_and_rescue capability in that description — but perimeter_security
+  has one. Try `domain perimeter_security` first.
+```
 
 ---
 

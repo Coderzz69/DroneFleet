@@ -45,6 +45,28 @@ SENSOR_HINTS: list[tuple[tuple[str, ...], str]] = [
     (("camera", "rgb", "optical", "video", "visual"), "rgb"),
 ]
 
+# Environmental hazards. These change nothing about feasibility -- they are
+# scene-setting -- but an operator should see the flood they were sent to.
+HAZARD_HINTS: list[tuple[tuple[str, ...], str]] = [
+    (("flood", "flooding", "inundat", "deluge", "submerged", "dam burst",
+      "tsunami", "high water", "washed out"), "flood"),
+    (("wildfire", "fire", "blaze", "burning", "ablaze", "arson", "smoke"), "fire"),
+    (("earthquake", "quake", "seismic", "rubble", "collapsed", "aftershock",
+      "debris field", "landslide"), "earthquake"),
+    (("storm", "hurricane", "cyclone", "typhoon", "blizzard", "gale",
+      "heavy rain", "downpour"), "storm"),
+    (("chemical", "hazmat", "toxic", "contaminat", "gas cloud"), "chemical"),
+]
+
+HAZARDS = ["flood", "fire", "earthquake", "storm", "chemical", "none"]
+
+
+def detect_hazard(text: str) -> str:
+    """Which environment the incident is happening in, if the order says."""
+    hits = _hits(text.lower(), HAZARD_HINTS)
+    return hits[0] if hits else ""
+
+
 NAME_POOL = ["Sweeper", "Courier", "Relay", "Spotter", "Sentinel", "Ranger", "Kestrel",
              "Harrier", "Vulcan", "Osprey", "Falcon", "Nomad", "Pelican", "Swift"]
 
@@ -343,11 +365,15 @@ def parse_mission(text: str, pack: Pack, world_size_m: float = 12000.0):
             goal = resolve_verb(data.get("goal_verb") or "", pack)
             if goal:
                 area = data.get("area_km2")
+                hz = data.get("hazard") or ""
                 return MissionSpec(
                     goal_verb=goal,
                     region=_build_region(data.get("grid"), data.get("direction"),
                                          float(area) if isinstance(area, (int, float)) else None,
                                          world_size_m),
+                    # the keyword table is authoritative when it fires; the
+                    # model only fills in what it did not catch
+                    hazard=detect_hazard(text) or (hz if hz in HAZARDS and hz != "none" else ""),
                     raw=text.strip())
         except Exception:
             pass  # fall through to the deterministic parser
@@ -365,4 +391,5 @@ def parse_mission(text: str, pack: Pack, world_size_m: float = 12000.0):
 
     return MissionSpec(goal_verb=goal,
                        region=_build_region(grid, direction, size, world_size_m),
+                       hazard=detect_hazard(text),
                        raw=text.strip())

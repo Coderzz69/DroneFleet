@@ -126,6 +126,9 @@ class Master:
         self.spec = parse_mission(prompt, self.pack, self.world.size_m)
         planner = Planner(self.pack, self.registry)
         self.plan = planner.plan(self.spec)
+        # show the operator the environment they are being sent into, as soon
+        # as the mission is understood -- before launch, alongside the region box
+        self.world.set_hazard(self.spec.hazard, self.spec.region)
         return self.plan
 
     async def launch(self) -> bool:
@@ -134,7 +137,7 @@ class Master:
         self.mission_active = True
         self._tokens.clear()
         if self.spec and self.spec.region:
-            self.world.seed_contacts(self.spec.region, n=3)
+            self.world.seed_contacts(self.spec.region, n=3, domain=self.pack.domain)
             self.world.coverage.clear()
         for t in self.plan.tasks:
             t.state = "PENDING"

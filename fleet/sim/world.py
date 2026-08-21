@@ -73,6 +73,7 @@ class World:
         self.drones: dict[str, DroneState] = {}
         self.records: dict[str, DroneRecord] = {}
         self.contacts: list[dict] = []
+        self.hazard: dict = {}          # {"kind": "flood", "region": {...}}
         self.coverage: set[tuple[int, int]] = set()
         self.coverage_cell_m = size_m / 60.0
         self.t = 0.0
@@ -143,7 +144,18 @@ class World:
                 pts.append(Waypoint(x0, y, label="leg"))
         return pts
 
-    def seed_contacts(self, region: dict, n: int = 3) -> None:
+    # what a contact turns out to BE, per domain. `truth` is ground truth and is
+    # never shown until a classify task actually reveals it.
+    TRUTHS = {
+        "search_and_rescue": ["survivor", "survivor", "survivor", "friendly"],
+        "perimeter_security": ["hostile", "friendly", "hostile", "friendly"],
+        "infrastructure_inspection": ["defect", "defect", "defect", "defect"],
+    }
+
+    def seed_contacts(self, region: dict, n: int = 3, domain: str = "") -> None:
+        """Scatter contacts through the mission area. Each gets a hidden ground
+        truth; the map shows `kind` only, which stays 'unknown' until classified."""
+        pool = self.TRUTHS.get(domain) or ["survivor"]
         self.contacts = []
         for i in range(n):
             self.contacts.append({
@@ -152,9 +164,15 @@ class World:
                 "y": self.rng.uniform(region["y"], region["y"] + region["h"]),
                 "found": False,
                 "classified": False,
-                "kind": "unknown",
+                "kind": "unknown",          # what the operator can see
+                "truth": pool[i % len(pool)],   # what it actually is
                 "served": False,
             })
+
+    def set_hazard(self, kind: str, region: dict) -> None:
+        """Scene-setting only: the environment the incident is happening in.
+        It never affects feasibility -- it is what the operator is looking at."""
+        self.hazard = {"kind": kind, "region": dict(region)} if kind and region else {}
 
     # -- physics -------------------------------------------------------------
     def _wind_vector(self) -> tuple[float, float]:
@@ -337,7 +355,9 @@ class World:
                 "distance_km": round(s.distance_flown_m / 1000.0, 2),
                 "waypoints": [{"x": round(w.x, 1), "y": round(w.y, 1)} for w in s.waypoints[:40]],
             } for s in self.drones.values()],
-            "contacts": self.contacts,
+            "contacts": [{k: v for k, v in c.items() if k != "truth"}
+                         for c in self.contacts],   # ground truth stays server-side
+            "hazard": self.hazard,
             "coverage": [[c[0], c[1]] for c in self.coverage],
             "coverage_cell_m": self.coverage_cell_m,
         }

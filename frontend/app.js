@@ -23,6 +23,18 @@ const PAL = {
   roof:'#d84848',   roof2:'#a83030', wall:'#f8f8f0', door:'#785038',
 };
 
+// Two independent axes for a contact:
+//   KIND  -> hue + shape  (what the thing is)
+//   STAGE -> fill weight  (how far through the pipeline it is)
+// Keeping them separate means you can read either without decoding the other.
+const KIND = {
+  unknown:  {hue:'#c8c8c8', dark:'#6a6a6a', label:'UNKNOWN'},
+  hostile:  {hue:'#d84848', dark:'#7a1c1c', label:'HOSTILE'},
+  friendly: {hue:'#48b048', dark:'#1f6a2a', label:'FRIENDLY'},
+  survivor: {hue:'#f8a030', dark:'#8a4e08', label:'SURVIVOR'},
+  defect:   {hue:'#f8d030', dark:'#8a6a08', label:'DEFECT'},
+};
+
 const ROLE_COLOR = {
   area_search:'#48c8c0', classify_survivor:'#9868d8', classify_iff:'#9868d8',
   classify_defect:'#9868d8', deliver_payload:'#d84848', relay_comms:'#f8d030',
@@ -159,16 +171,222 @@ function drawDrone(g,cx,cy,size,color,headingDeg,spin,dead){
   g.restore();
 }
 
-function drawSurvivor(g,cx,cy,size,state,bob){
-  const s=size/12; g.save(); g.translate(cx,cy+bob); g.scale(s,s);
-  const shirt = state==='served' ? '#48a0f8' : state==='classified' ? '#48b048' : '#c8c8c8';
+// stage -> how solidly the marker is painted.
+//   found       outline only, nothing known yet
+//   classified  tinted, identity revealed
+//   served      solid, dealt with
+function stageStyle(g, kind, stage){
+  const k = KIND[kind] || KIND.unknown;
+  g.lineWidth = 1.4;
+  g.strokeStyle = stage === 'found' ? KIND.unknown.dark : k.dark;
+  if (stage === 'served')      { g.fillStyle = k.hue;      g.globalAlpha = 1;   }
+  else if (stage === 'classified'){ g.fillStyle = k.hue;   g.globalAlpha = .55; }
+  else                          { g.fillStyle = '#0d1420'; g.globalAlpha = .35; }
+  return k;
+}
+
+function servedTick(g,ox,oy){
+  g.strokeStyle='#f8f8f0'; g.lineWidth=1.5; g.lineCap='square';
+  g.beginPath(); g.moveTo(ox-1.8,oy-0.2); g.lineTo(ox-0.5,oy+1.1); g.lineTo(ox+2,oy-1.8);
+  g.stroke(); g.lineCap='butt';
+}
+
+// A person. Used for survivors and friendlies — someone you are helping or
+// must not shoot at.
+function drawPerson(g,size,kind,stage){
+  const k = KIND[kind] || KIND.unknown;
+  const s=size/12; g.scale(s,s);
   g.fillStyle='#00000040'; g.beginPath(); g.ellipse(0,6,4,1.6,0,0,7); g.fill();
-  g.fillStyle='#f8d0a8'; g.fillRect(-2,-6,4,4);           // head
-  g.fillStyle='#584038'; g.fillRect(-2,-7,4,2);           // hair
-  g.fillStyle=shirt;      g.fillRect(-3,-2,6,5);          // body
-  g.fillStyle='#f8d0a8'; g.fillRect(-4,-1,1,3); g.fillRect(3,-1,1,3);
+  const skin = stage==='found' ? '#8a8a8a' : '#f8d0a8';
+  g.fillStyle=skin;      g.fillRect(-2,-6,4,4);            // head
+  g.fillStyle= stage==='found' ? '#5a5a5a' : '#584038';
+  g.fillRect(-2,-7,4,2);                                   // hair
+  stageStyle(g,kind,stage); g.fillRect(-3,-2,6,5);          // torso carries the hue
+  g.globalAlpha=1; g.strokeRect(-3,-2,6,5);
+  g.fillStyle=skin; g.fillRect(-4,-1,1,3); g.fillRect(3,-1,1,3);
   g.fillStyle='#384058'; g.fillRect(-2,3,1.6,3); g.fillRect(0.6,3,1.6,3);
+  if(stage==='served') servedTick(g,0,0);
+}
+
+// Angular, dark, spiked — reads as a threat at a glance and shares no
+// silhouette with the civilian figure.
+function drawHostile(g,size,stage){
+  const s=size/12; g.scale(s,s);
+  g.fillStyle='#00000040'; g.beginPath(); g.ellipse(0,6,4.5,1.6,0,0,7); g.fill();
+  stageStyle(g,'hostile',stage);
+  g.beginPath();                       // four-pointed spike
+  g.moveTo(0,-7); g.lineTo(2.2,-2.2); g.lineTo(6.5,0); g.lineTo(2.2,2.2);
+  g.lineTo(0,6.5); g.lineTo(-2.2,2.2); g.lineTo(-6.5,0); g.lineTo(-2.2,-2.2);
+  g.closePath(); g.fill(); g.globalAlpha=1; g.stroke();
+  g.fillStyle = stage==='found' ? '#8a8a8a' : '#2a0d0d';
+  g.fillRect(-1.1,-1.1,2.2,2.2);       // dark core
+  if(stage==='served') servedTick(g,0.2,0.2);
+}
+
+// A hazard diamond planted on the asset. No person: a crack in a pipe is not
+// a someone.
+function drawDefect(g,size,stage){
+  const s=size/12; g.scale(s,s);
+  g.fillStyle='#00000040'; g.beginPath(); g.ellipse(0,6,4,1.5,0,0,7); g.fill();
+  stageStyle(g,'defect',stage);
+  g.beginPath(); g.moveTo(0,-6); g.lineTo(6,0); g.lineTo(0,6); g.lineTo(-6,0);
+  g.closePath(); g.fill(); g.globalAlpha=1; g.stroke();
+  g.fillStyle = stage==='found' ? '#9a9a9a' : '#3a2c04';
+  g.fillRect(-0.7,-3.4,1.4,4.2); g.fillRect(-0.7,2.2,1.4,1.4);   // bang
+  if(stage==='served') servedTick(g,0.2,0.4);
+}
+
+// Not yet classified: a hollow marker with a question mark. Deliberately
+// shapeless — you genuinely do not know what this is yet.
+function drawUnknown(g,size){
+  const s=size/12; g.scale(s,s);
+  g.fillStyle='#00000040'; g.beginPath(); g.ellipse(0,6,3.6,1.4,0,0,7); g.fill();
+  stageStyle(g,'unknown','found');
+  g.beginPath(); g.arc(0,0,5,0,Math.PI*2); g.fill(); g.globalAlpha=1; g.stroke();
+  g.fillStyle='#e8e8e0';                       // 5x7 pixel '?'
+  g.fillRect(-1.5,-3.5,3,1);                   // top bar
+  g.fillRect(-2.5,-2.5,1,1); g.fillRect(1.5,-2.5,1,1);
+  g.fillRect(1.5,-1.5,1,1);
+  g.fillRect(-0.5,-0.5,2,1);                   // hook into the stem
+  g.fillRect(-0.5,0.5,1,1);
+  g.fillRect(-0.5,2.2,1,1);                    // dot
+}
+
+// ---------------------------------------------------------------- hazards
+// The environment the incident is happening in. Purely visual — it changes
+// nothing about feasibility — but "the north flood zone" should look flooded.
+// Generated from the region's own coordinates so it is stable frame to frame.
+const HAZARD_META = {
+  flood:      {label:'FLOOD ZONE',    tint:'rgba(64,110,220,.40)', edge:'#88b0f8'},
+  fire:       {label:'ACTIVE FIRE',   tint:'rgba(200,64,16,.26)',  edge:'#f87038'},
+  earthquake: {label:'QUAKE DAMAGE',  tint:'rgba(90,74,58,.30)',   edge:'#a89078'},
+  storm:      {label:'SEVERE STORM',  tint:'rgba(40,48,72,.42)',   edge:'#8fa8d0'},
+  chemical:   {label:'CONTAMINATED',  tint:'rgba(150,90,190,.34)', edge:'#c8f83a'},
+};
+
+function hazardCells(region, cell){
+  // deterministic scatter of feature points across the region
+  const out=[];
+  const i0=Math.floor(region.x/cell), j0=Math.floor(region.y/cell);
+  const i1=Math.ceil((region.x+region.w)/cell), j1=Math.ceil((region.y+region.h)/cell);
+  for(let j=j0;j<j1;j++) for(let i=i0;i<i1;i++){
+    const r=mulberry(((i*73856093)^(j*19349663))>>>0)();
+    out.push({i,j,r});
+  }
+  return out;
+}
+
+function drawHazard(g, hz, frame){
+  if(!hz || !hz.kind || !hz.region || !hz.region.w) return;
+  const meta = HAZARD_META[hz.kind]; if(!meta) return;
+  const R = hz.region;
+  const [x0,y0] = w2s(R.x, R.y), [x1,y1] = w2s(R.x+R.w, R.y+R.h);
+  const cell = Math.max(120, (worldSize()/60));
+  const px = (tilePx()/mPerTile()) * cell;         // one hazard cell in screen px
+
+  g.save();
+  g.beginPath(); g.rect(x0,y0,x1-x0,y1-y0); g.clip();
+  g.fillStyle = meta.tint; g.fillRect(x0,y0,x1-x0,y1-y0);
+
+  const cells = hazardCells(R, cell);
+
+  if(hz.kind==='flood'){
+    // standing water: cells below a threshold are submerged, with a crawling
+    // wave line so the surface reads as liquid rather than a blue rectangle
+    cells.forEach(c=>{
+      if(c.r>0.62) return;
+      const [sx,sy]=w2s(c.i*cell, c.j*cell);
+      g.fillStyle = c.r<0.3 ? 'rgba(48,88,208,.82)' : 'rgba(104,164,248,.74)';
+      g.fillRect(sx,sy,px+1,px+1);
+      g.fillStyle='rgba(200,224,255,.5)';
+      const yy = sy + px*0.5 + Math.sin(frame*0.06 + c.i*0.8 + c.j*0.5)*px*0.16;
+      g.fillRect(sx+px*0.15, yy, px*0.7, Math.max(1,px*0.09));
+    });
+  }
+
+  else if(hz.kind==='fire'){
+    cells.forEach(c=>{
+      const [sx,sy]=w2s(c.i*cell, c.j*cell);
+      if(c.r<0.34){                                  // burnt ground
+        g.fillStyle='rgba(30,20,16,.62)'; g.fillRect(sx,sy,px+1,px+1);
+      }
+      if(c.r>0.72){                                  // flame + smoke
+        const f=(frame*0.14+c.r*11)%1;
+        const h=px*(0.5+0.3*Math.sin(frame*0.2+c.i));
+        g.fillStyle='#f8a030'; g.fillRect(sx+px*0.3, sy+px*0.6-h*0.5, px*0.4, h*0.5);
+        g.fillStyle='#f8d030'; g.fillRect(sx+px*0.4, sy+px*0.6-h*0.28, px*0.2, h*0.28);
+        g.fillStyle='#d84848'; g.fillRect(sx+px*0.34, sy+px*0.55, px*0.32, px*0.14);
+        g.globalAlpha=0.30*(1-f);                    // smoke rising
+        g.fillStyle='#585858';
+        g.fillRect(sx+px*0.25, sy+px*0.4-f*px*2.2, px*0.5, px*0.5);
+        g.globalAlpha=1;
+      }
+    });
+  }
+
+  else if(hz.kind==='earthquake'){
+    cells.forEach(c=>{
+      const [sx,sy]=w2s(c.i*cell, c.j*cell);
+      if(c.r>0.5){                                   // collapsed rubble heaps
+        g.fillStyle='#7a6a58'; g.fillRect(sx+px*0.08,sy+px*0.38,px*0.55,px*0.46);
+        g.fillStyle='#9a8a76'; g.fillRect(sx+px*0.44,sy+px*0.5,px*0.46,px*0.36);
+        g.fillStyle='#b8a894'; g.fillRect(sx+px*0.22,sy+px*0.18,px*0.34,px*0.3);
+        g.fillStyle='#5a4a3a'; g.fillRect(sx+px*0.3,sy+px*0.6,px*0.18,px*0.2);
+      }
+      if(c.r<0.34){                                  // ground fissures
+        g.strokeStyle='rgba(24,18,14,.8)'; g.lineWidth=Math.max(1,px*0.1);
+        g.beginPath(); g.moveTo(sx,sy+px*0.3);
+        g.lineTo(sx+px*0.45,sy+px*0.6); g.lineTo(sx+px,sy+px*0.35); g.stroke();
+      }
+    });
+  }
+
+  else if(hz.kind==='storm'){
+    g.strokeStyle='rgba(180,204,240,.55)'; g.lineWidth=Math.max(1,px*0.06);
+    const off=(frame*7)%40;
+    for(let k=-40;k<(x1-x0)+40;k+=Math.max(6,px*0.55)){
+      g.beginPath();
+      g.moveTo(x0+k+off, y0-20); g.lineTo(x0+k+off-14, y1+20); g.stroke();
+    }
+    if(Math.floor(frame/9)%23===0){                  // lightning flash
+      g.fillStyle='rgba(248,248,240,.30)'; g.fillRect(x0,y0,x1-x0,y1-y0);
+    }
+  }
+
+  else if(hz.kind==='chemical'){
+    cells.forEach(c=>{
+      if(c.r<0.55) return;
+      const [sx,sy]=w2s(c.i*cell, c.j*cell);
+      const d=Math.sin(frame*0.05+c.i*0.7+c.j*0.4)*px*0.2;
+      // acid green on a violet ground: nothing on the terrain palette is
+      // anywhere near this, so contamination can never read as scenery
+      g.globalAlpha=0.5; g.fillStyle='#c8f83a';
+      g.beginPath(); g.arc(sx+px*0.5+d, sy+px*0.5, px*0.5, 0, Math.PI*2); g.fill();
+      g.globalAlpha=0.35; g.fillStyle='#7a3a9a';
+      g.beginPath(); g.arc(sx+px*0.5-d*0.6, sy+px*0.55, px*0.62, 0, Math.PI*2); g.fill();
+      g.globalAlpha=1;
+    });
+  }
+
   g.restore();
+
+  // banner on the region edge
+  g.save();
+  g.strokeStyle=meta.edge; g.lineWidth=2; g.setLineDash([2,4]);
+  g.strokeRect(x0,y0,x1-x0,y1-y0); g.setLineDash([]);
+  g.font='8px "Press Start 2P",monospace'; g.textAlign='left';
+  g.lineWidth=3; g.strokeStyle='#000'; g.strokeText(meta.label, x0+4, y1+13);
+  g.fillStyle=meta.edge; g.fillText(meta.label, x0+4, y1+13);
+  g.restore();
+}
+
+function drawContact(g,cx,cy,size,kind,stage,bob){
+  g.save(); g.translate(cx,cy+bob);
+  if      (stage === 'found')      drawUnknown(g,size);
+  else if (kind === 'hostile')     drawHostile(g,size,stage);
+  else if (kind === 'defect')      drawDefect(g,size,stage);
+  else                             drawPerson(g,size,kind,stage);
+  g.globalAlpha=1; g.restore();
 }
 
 function drawBase(g,cx,cy,size){
@@ -259,6 +477,9 @@ function render(){
 
   const region=regionOfPlan();
 
+  // --- environmental hazard (under the fog, over the terrain) -------------
+  drawHazard(ctx, w.hazard, frame);
+
   // --- unswept fog inside the search box ---------------------------------
   if(state.fog && region){
     const cell=w.coverage_cell_m||200;
@@ -266,7 +487,9 @@ function render(){
     const [rx0,ry0]=w2s(region.x,region.y), [rx1,ry1]=w2s(region.x+region.w,region.y+region.h);
     ctx.save();
     ctx.beginPath(); ctx.rect(rx0,ry0,rx1-rx0,ry1-ry0); ctx.clip();
-    ctx.fillStyle='rgba(10,16,36,.52)';
+    // a hazard already darkens this area; two heavy overlays stacked turn the
+    // whole region to mud, so the unswept shading gets out of the way
+    ctx.fillStyle = (w.hazard && w.hazard.kind) ? 'rgba(10,16,36,.30)' : 'rgba(10,16,36,.52)';
     const i0=Math.floor(region.x/cell), j0=Math.floor(region.y/cell);
     const i1=Math.ceil((region.x+region.w)/cell), j1=Math.ceil((region.y+region.h)/cell);
     for(let j=j0;j<=j1;j++) for(let i=i0;i<=i1;i++){
@@ -333,10 +556,13 @@ function render(){
     if(!c.found) return;
     const [sx,sy]=w2s(c.x,c.y);
     const bob=Math.sin(frame*0.09+sx)*1.2;
-    drawSurvivor(ctx,sx,sy,Math.max(14,t*1.5),c.served?'served':(c.classified?'classified':'unknown'),bob);
-    if(!c.classified){
+    const stage = c.served ? 'served' : (c.classified ? 'classified' : 'found');
+    drawContact(ctx,sx,sy,Math.max(16,t*1.6),c.kind||'unknown',stage,bob);
+    if(stage==='found'){
       ctx.save(); ctx.fillStyle='#f8d030'; ctx.font='16px "Press Start 2P",monospace';
       ctx.textAlign='center'; ctx.fillText('!',sx,sy-t*1.15+Math.sin(frame*0.15)*2); ctx.restore();
+    } else {
+      label(sx,sy+t*1.05,(KIND[c.kind]||KIND.unknown).label,(KIND[c.kind]||KIND.unknown).hue);
     }
   });
 
@@ -368,6 +594,31 @@ function render(){
     }
     label(sx,sy+size*0.78,d.name.toUpperCase(),d.alive?'#f8f8f0':'#d84848');
   });
+
+  // --- legend: only the kinds actually present, so it never clutters -------
+  {
+    const seen=[];
+    (w.contacts||[]).forEach(c=>{
+      if(!c.found) return;
+      const k=c.classified?(c.kind||'unknown'):'unknown';
+      if(!seen.includes(k)) seen.push(k);
+    });
+    if(seen.length){
+      ctx.save();
+      const lh=13, pad=6, bw=104, bh=pad*2+seen.length*lh;
+      const bx=10, by=cssH-bh-26;
+      ctx.fillStyle='rgba(16,28,52,.86)'; ctx.fillRect(bx,by,bw,bh);
+      ctx.strokeStyle='#000'; ctx.lineWidth=2; ctx.strokeRect(bx,by,bw,bh);
+      ctx.font='8px "Press Start 2P",monospace'; ctx.textAlign='left';
+      seen.forEach((k,i)=>{
+        const meta=KIND[k]||KIND.unknown, yy=by+pad+i*lh;
+        ctx.fillStyle=meta.hue; ctx.fillRect(bx+pad,yy+2,7,7);
+        ctx.strokeStyle=meta.dark; ctx.lineWidth=1; ctx.strokeRect(bx+pad,yy+2,7,7);
+        ctx.fillStyle='#e8eef8'; ctx.fillText(meta.label,bx+pad+13,yy+9);
+      });
+      ctx.restore();
+    }
+  }
 
   if(state.follow&&state.selected){
     const d=(w.drones||[]).find(x=>x.id===state.selected);

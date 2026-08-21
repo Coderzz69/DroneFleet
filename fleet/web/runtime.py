@@ -17,6 +17,7 @@ from ..core.messages import Envelope
 from ..core import llm as llm_mod
 from ..core import nlp
 from ..core.nlp import parse_drone
+from ..core.nlp import resolve_verb
 from ..core.ontology import available_packs, infer_pack, load_pack
 from ..core.planner import INSUFFICIENT
 from ..net import topics
@@ -212,6 +213,7 @@ class Runtime:
             self.master.mission_active = False
             self.world.contacts.clear()
             self.world.coverage.clear()
+            self.world.hazard = {}
             await self.say("system", "Everything reset.")
             await self.master.push_plan()
             return
@@ -248,10 +250,8 @@ class Runtime:
             if name not in available_packs():
                 await self.say("error", f"Unknown pack. Available: {', '.join(available_packs())}")
                 return
-            self.pack = load_pack(name)
-            self.master.pack = self.pack
-            self._sync_llm_pack()
             await self.say("system", f"Domain pack → {name}")
+            await self._switch_pack(name)
             return
 
         if word == "llm":
@@ -383,6 +383,42 @@ class Runtime:
                 await self.say("system", "LLM off. `llm on` to enable "
                                          f"({self.llm_model} via Ollama).")
 
+    async def _switch_pack(self, name: str) -> None:
+        """Load a pack and re-read every drone against the new vocabulary.
+
+        A capability record is only meaningful relative to a pack. The durable
+        truth is what the operator typed, which is why `source_text` is kept --
+        so a fleet registered before the domain was known is not stranded
+        holding verbs that no longer exist."""
+        if name == self.pack.domain:
+            return
+        self.pack = load_pack(name)
+        self.master.pack = self.pack
+        self._sync_llm_pack()
+
+        changed = []
+        for rec in self.master.registry.all():
+            if not rec.source_text:
+                continue
+            fresh = await asyncio.to_thread(
+                parse_drone, rec.source_text, self.pack, rec.id, 0)
+            fresh.name = rec.name          # a callsign is not pack-specific
+            if fresh.verbs() != rec.verbs():
+                changed.append((rec.name, sorted(rec.verbs()), sorted(fresh.verbs())))
+            self.master.registry.add(fresh)        # replaces in place, by id
+            self.world.records[rec.id] = fresh     # the physics reads this too
+            agent = self.agents.get(rec.id)
+            if agent:
+                agent.rec = fresh
+                await agent._announce()            # re-announce on the bus
+
+        for name_, before, after in changed:
+            await self.say("system", f"{name_} re-read for {self.pack.domain}: "
+                                     f"[{', '.join(before) or '—'}] → "
+                                     f"[{', '.join(after) or '—'}]")
+        if changed:
+            await self.master.push_plan()
+
     # -- helpers -------------------------------------------------------------
     async def _add_drone(self, description: str) -> None:
         if not description:
@@ -397,8 +433,14 @@ class Runtime:
             parse_drone, description, self.pack, did, len(self.master.registry))
 
         if not rec.capabilities:
-            await self.say("error", f"Could not find a capability in that description. "
-                                    f"Known verbs: {', '.join(sorted(self.pack.verbs))}")
+            elsewhere = self._pack_that_knows(description)
+            if elsewhere:
+                await self.say("error", f"No {self.pack.domain} capability in that "
+                                        f"description — but {elsewhere} has one. "
+                                        f"Try `domain {elsewhere}` first.")
+            else:
+                await self.say("error", f"Could not find a capability in that description. "
+                                        f"Known verbs: {', '.join(sorted(self.pack.verbs))}")
             return
 
         self.master.register(rec)
@@ -419,6 +461,21 @@ class Runtime:
         if self.last_prompt:
             await self._evaluate(self.last_prompt, quiet_prompt=True)
 
+    def _pack_that_knows(self, description: str) -> str:
+        """Which other domain would understand this drone? Turns a dead end
+        into a one-line fix instead of a guessing game."""
+        for name in available_packs():
+            if name == self.pack.domain:
+                continue
+            try:
+                other = load_pack(name)
+            except Exception:
+                continue
+            probe = parse_drone(description, other, "probe", 0)
+            if probe.capabilities:
+                return name
+        return ""
+
     async def _evaluate(self, prompt: str, quiet_prompt: bool = False) -> None:
         if not len(self.master.registry):
             await self.say("error", "No drones registered yet — describe some first, or type `demo`.")
@@ -427,10 +484,8 @@ class Runtime:
         self.last_prompt = prompt
         inferred = infer_pack(prompt)
         if inferred != self.pack.domain:
-            self.pack = load_pack(inferred)
-            self.master.pack = self.pack
-            self._sync_llm_pack()
             await self.say("system", f"[domain: {inferred}] — override with `domain <name>`")
+            await self._switch_pack(inferred)
 
         if self.llm:
             await self.say("llm", f"[{self.llm_model}] reading the mission order…")
