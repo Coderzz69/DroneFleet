@@ -248,6 +248,14 @@ html,body{
 .prog{height:7px;background:#585858;border:2px solid var(--gb-ink);margin-top:5px;padding:1px;}
 .prog span{display:block;height:100%;background:var(--gb-teal);}
 
+.stale{color:var(--gb-red);}
+.stalebox{
+  border:2px solid var(--gb-red);
+  background:#f4dcd8;color:#5a1f18;
+  font-size:8px;line-height:1.7;
+  padding:6px;margin:6px 0;
+}
+
 /* --------- mission tree --------- */
 .mission-body{font-size:8px;}
 .m-goal{
@@ -311,7 +319,12 @@ html,body{
 .log::-webkit-scrollbar{width:10px;}
 .log::-webkit-scrollbar-track{background:var(--gb-cream-2);}
 .log::-webkit-scrollbar-thumb{background:var(--gb-blue-lt);border:2px solid var(--gb-cream-2);}
-.line{margin:0 0 2px;word-break:break-word;}
+.line{
+  margin:0 0 2px;
+  word-break:break-word;
+  /* the guide aligns its columns with spaces; HTML would otherwise eat them */
+  white-space:pre-wrap;
+}
 .line.you{color:var(--gb-blue);}
 .line.you::before{content:"› ";}
 .line.system,.line.help{color:#6a6a6a;}
@@ -320,6 +333,10 @@ html,body{
 .line.warn,.line.suggest,.line.fault{color:#8a5a00;}
 .line.assign,.line.plan,.line.mission{color:#2a4fa8;}
 .line.contact,.line.link,.line.note{color:#6a3fa8;}
+.line.guidehead{
+  color:#fff;background:var(--gb-blue);
+  padding:2px 6px;margin:8px 0 3px;display:inline-block;
+}
 .line.verdict{font-size:16px;letter-spacing:1px;}
 .line.verdict.FEASIBLE{color:#1f7a2f;}
 .line.verdict.DEGRADED{color:#8a5a00;}

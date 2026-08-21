@@ -208,6 +208,22 @@ def main():
     check_true("home, within 100 m of base",
                _m.hypot(st.x - w2.base[0], st.y - w2.base[1]) < 100)
 
+    print("\nthe prompt guide is generated from the pack, not hardcoded")
+    from fleet.web.runtime import prompt_guide
+    for pack, must in ((sar, "survivors"), (sec, "intruders"), (insp, "cracks")):
+        flat = " ".join(l for _, lines in prompt_guide(pack) for l in lines)
+        check(f"{pack.domain}: mission examples name its subject", must in flat, True)
+        caps = dict(prompt_guide(pack))
+        head = next(k for k in caps if k.startswith("CAPABILITIES"))
+        listed = {l.split()[0] for l in caps[head]}
+        missing = {v for v in pack.verbs if v != "loiter"} - listed
+        check(f"{pack.domain}: every verb is listed", missing, set())
+    sar_flat = " ".join(l for _, ls in prompt_guide(sar) for l in ls)
+    check("rescue does not advertise 'friend or foe'",
+          "friend or foe" in sar_flat, False)
+    sec_flat = " ".join(l for _, ls in prompt_guide(sec) for l in ls)
+    check("security does advertise it", "friend or foe" in sec_flat, True)
+
     print(f"\n  {PASS} passed, {FAIL} failed\n")
     return 1 if FAIL else 0
 

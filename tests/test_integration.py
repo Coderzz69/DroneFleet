@@ -116,6 +116,50 @@ async def main() -> int:
         check("a gap explains what is now missing",
               any(g.reason == "MISSING_CAPABILITY" for g in rt.master.plan.gaps), True)
 
+        print("\nthe master tracks the fleet from received messages only")
+        await rt.dispatch("clear")
+        await rt.dispatch("demo")
+        await wait_until(lambda: len(rt.master.registry) == 3, 10)
+        ok = await wait_until(lambda: len(rt.master.views) >= 3, 10)
+        check("a view exists for every drone", ok, True)
+        check("battery learned from heartbeats",
+              all(v.battery_pct is not None for v in rt.master.views.values()), True)
+
+        await rt.dispatch("find survivors in the north flood zone and deliver supplies")
+        await rt.dispatch("launch")
+        ok = await wait_until(lambda: any(v.task_id and v.phase == "WORKING"
+                                          for v in rt.master.views.values()), 20)
+        check("the master records what it ordered", ok, True)
+        ok = await wait_until(lambda: any(v.x is not None for v in rt.master.views.values()), 20)
+        check("position learned from telemetry", ok, True)
+
+        working = next(v for v in rt.master.views.values() if v.task_id)
+        check("it knows the verb it ordered", bool(working.verb), True)
+        ok = await wait_until(lambda: working.reports > 0, 30)
+        check("progress reports arrive", ok, True)
+        check("and say what the drone is doing",
+              working.activity in ("TRANSIT", "WORKING", "ON_STATION"), True)
+
+        print("\nbelief goes stale when the drone stops talking")
+        victim = working.id
+        rt.world.kill(victim)
+        ok = await wait_until(lambda: rt.master.views[victim].stale(__import__("time").time()), 20)
+        check("the master notices the silence", ok, True)
+        ok = await wait_until(lambda: rt.master.views[victim].phase == "LOST", 25)
+        check("phase becomes LOST", ok, True)
+        check("it still remembers the last position it was given",
+              rt.master.views[victim].x is not None, True)
+
+        print("\nfinished drones are explicitly recalled")
+        await rt.dispatch("clear")
+        await rt.dispatch("demo")
+        await wait_until(lambda: len(rt.master.registry) == 3, 10)
+        await rt.dispatch("find survivors in grid E5 and deliver supplies")
+        await rt.dispatch("launch")
+        ok = await wait_until(lambda: any(v.phase == "RECALLED"
+                                          for v in rt.master.views.values()), 200)
+        check("a drone with no further tasking is sent home", ok, True)
+
     finally:
         await rt.stop()
 

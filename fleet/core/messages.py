@@ -25,6 +25,7 @@ class MsgType:
     ALERT = "ALERT"
     HEARTBEAT = "HEARTBEAT"
     ABORT = "ABORT"
+    RECALL = "RECALL"          # your part is done -- come home
 
 
 @dataclass

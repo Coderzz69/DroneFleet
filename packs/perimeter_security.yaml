@@ -1,6 +1,9 @@
 domain: perimeter_security
 keywords: [perimeter, intruder, security, patrol, breach, hostile, unauthorised, unauthorized, trespass, intercept, guard]
 
+# what this domain goes looking for, in the operator's words
+subject: intruders
+
 verbs:
   area_search:
     requires: [region]

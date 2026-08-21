@@ -1,6 +1,9 @@
 domain: search_and_rescue
 keywords: [rescue, survivor, survivors, flood, earthquake, missing, casualty, medical, supplies, disaster, stranded, victim]
 
+# what this domain goes looking for, in the operator's words
+subject: survivors
+
 verbs:
   area_search:
     requires: [region]

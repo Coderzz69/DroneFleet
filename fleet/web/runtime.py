@@ -17,7 +17,8 @@ from ..core.messages import Envelope
 from ..core import llm as llm_mod
 from ..core import nlp
 from ..core.nlp import parse_drone
-from ..core.nlp import resolve_verb
+from ..core.nlp import (HAZARD_HINTS, SENSOR_HINTS, VERB_HINTS, goal_depth,
+                        resolve_verb)
 from ..core.ontology import available_packs, infer_pack, load_pack
 from ..core.planner import INSUFFICIENT
 from ..net import topics
@@ -33,6 +34,7 @@ SIM_SPEED = 12.0       # simulated seconds per real second
 UI_HZ = 10.0
 
 HELP = [
+    "prompts                what you can type, with examples",
     "add <description>      register a drone from plain English",
     "list                   show the fleet",
     "remove <id>            drop a drone",
@@ -57,6 +59,85 @@ DEMO_FLEET = [
     "a drone called Courier that carries and drops a 5kg medical kit, 35 min endurance",
     "a drone called Relay that hovers high up as a radio repeater, 12km range",
 ]
+
+
+def words_for(verb: str, pack) -> list[str]:
+    """The phrases the parser actually recognises for this verb. Derived from
+    the parser's own table, so the guide can never drift from the code."""
+    exact: list[str] = []          # hints written for this verb specifically
+    generic: list[str] = []        # hints that only resolve here in this pack
+    for phrases, target in VERB_HINTS:
+        if resolve_verb(target, pack) != verb:
+            continue
+        usable = [p for p in phrases if " " in p or len(p) > 4]
+        (exact if target == verb else generic).extend(usable)
+    # a rescue pack must not advertise "friend or foe" for classify_survivor,
+    # so the verb's own wording always wins over the generic fallback
+    return (exact + generic)[:3]
+
+
+def prompt_guide(pack) -> list[tuple[str, list[str]]]:
+    """What you can say, built from the loaded pack. Switching domain changes
+    this, because the vocabulary it describes has changed."""
+    caps = []
+    for verb in sorted(pack.verbs):
+        if verb == "loiter":
+            continue
+        v = pack.verbs[verb]
+        words = words_for(verb, pack)
+        line = f"{verb:20} {', '.join(words) if words else v.description.lower()}"
+        if v.sensors_any:
+            line += f"   (needs {'/'.join(v.sensors_any)})"
+        caps.append(line)
+
+    sensors = ", ".join(sorted({t for _, t in SENSOR_HINTS}))
+    hazards = ", ".join(sorted({t for _, t in HAZARD_HINTS}))
+
+    # the deepest verb is the real objective -- the one worth asking for
+    goal = max((v for v in pack.verbs), key=lambda v: goal_depth(v, pack))
+    goal_phrase = goal.replace("_", " ")
+
+    # what this domain goes looking for. The pack declares it, because a verb
+    # hint table holds verbs -- guessing a noun out of it produced "identifys".
+    subject = pack.subject
+    mission_examples = [f"{goal_phrase} in grid C4"]
+    if subject:
+        mission_examples.append(f"search the north sector for {subject} "
+                                f"and {goal_phrase}")
+    mission_examples.append(f"patrol a 4 km2 area in grid B3 and {goal_phrase}")
+
+    return [
+        ("ADD A DRONE — describe what it can do", [
+            "add thermal search drone called Sweeper, 45 min endurance, 8 km radio",
+            "add courier named Mule, deliver supplies, 3 kg payload, 35 min endurance",
+            "add high altitude radio relay called Tower, 1 hour endurance",
+        ]),
+        (f"CAPABILITIES in {pack.domain} — words that map to each", caps),
+        ("NUMBERS the parser reads", [
+            "45 min endurance / 1 hour endurance      flight time",
+            "3 kg payload                             what it can carry",
+            "8 km radio / 12 km comms range           how far it can talk",
+            "12 m/s or 45 km/h                        cruise speed",
+            "120 m altitude / high altitude           survey height",
+            "called X / named X                       its callsign",
+        ]),
+        ("SENSORS", [sensors]),
+        ("GIVE A MISSION — name the FINAL objective, not the steps", mission_examples),
+        ("WHERE — any one of these forms", [
+            "grid C4 / sector D5 / quadrant A2        A-J across, 0-9 down",
+            "north / southwest / east                 relative to centre",
+            "4 km2                                    size of the area",
+        ]),
+        ("HAZARDS — drawn on the map if you name one", [hazards]),
+        ("THEN", [
+            "why        the full breakdown of the verdict",
+            "launch     fly it        abort    recall everyone",
+            "retry      re-evaluate after changing the fleet",
+        ]),
+        ("BREAK IT ON PURPOSE", [
+            "kill drone-1     loss 30     lag 2",
+        ]),
+    ]
 
 
 class Runtime:
@@ -93,7 +174,9 @@ class Runtime:
         await self.web.start()
         self._tasks.append(asyncio.create_task(self._sim_loop()))
         self._tasks.append(asyncio.create_task(self._ui_loop()))
-        await self.master.console("system", "Fleet command online. Type `demo` then `help`.")
+        await self.master.console(
+            "system", "Fleet command online.  `prompts` = what you can type · "
+                      "`demo` = a ready-made fleet · `help` = commands")
 
     async def stop(self) -> None:
         for t in self._tasks:
@@ -193,6 +276,14 @@ class Runtime:
         if word in ("help", "?"):
             for line in HELP:
                 await self.say("help", line)
+            await self.say("system", "`prompts` shows what you can actually type.")
+            return
+
+        if word in ("prompts", "examples", "guide"):
+            for title, lines in prompt_guide(self.pack):
+                await self.say("guidehead", title)
+                for ln in lines:
+                    await self.say("help", "  " + ln)
             return
 
         if word == "demo":
@@ -344,9 +435,37 @@ class Runtime:
             self.llm.pack = self.pack
             nlp.LLM_ADAPTER = self.llm
 
-    async def enable_llm(self, model: str = None, host: str = None) -> bool:
+    async def enable_llm(self, model: str = None, host: str = None,
+                         autostart: bool = True) -> bool:
+        """Bring the local model up. Starts the daemon and fetches the weights
+        if needed, so the app is self-starting rather than 'remember to run
+        ollama first'. Every step is reported; none of it is fatal."""
         self.llm_model = model or self.llm_model
         self.llm_host = host or self.llm_host
+
+        if autostart and not await asyncio.to_thread(llm_mod.daemon_up, self.llm_host):
+            await self.say("llm", "starting the local model service…")
+            ok, msg = await asyncio.to_thread(llm_mod.start_daemon, self.llm_host)
+            await self.say("llm" if ok else "error", f"ollama: {msg}")
+            if not ok:
+                nlp.LLM_ADAPTER = None
+                self.llm = None
+                await self.say("system", "Falling back to the keyword parser. "
+                                         "Everything still works; `llm status` for detail.")
+                return False
+
+        if autostart and not await asyncio.to_thread(
+                llm_mod.have_model, self.llm_model, self.llm_host):
+            await self.say("llm", f"fetching {self.llm_model} — first run only, "
+                                  f"this can take a few minutes…")
+            ok, msg = await asyncio.to_thread(
+                llm_mod.pull_model, self.llm_model, self.llm_host)
+            await self.say("llm" if ok else "error", msg)
+            if not ok:
+                nlp.LLM_ADAPTER = None
+                self.llm = None
+                return False
+
         adapter = await asyncio.to_thread(
             llm_mod.build, self.pack, self.llm_model, self.llm_host)
         if adapter is None:

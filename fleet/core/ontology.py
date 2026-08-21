@@ -132,6 +132,7 @@ class Pack:
     verbs: dict[str, Verb]
     policies: list[Policy]
     keywords: list[str] = field(default_factory=list)
+    subject: str = ""        # what this domain looks for: "survivors", "intruders"
 
     def produces_index(self) -> dict[str, list[str]]:
         idx: dict[str, list[str]] = {}
@@ -186,7 +187,8 @@ def load_pack(name: str) -> Pack:
         ))
 
     return Pack(domain=raw.get("domain", name), verbs=verbs, policies=policies,
-                keywords=raw.get("keywords") or [])
+                keywords=raw.get("keywords") or [],
+                subject=str(raw.get("subject") or ""))
 
 
 def available_packs() -> list[str]:

@@ -735,6 +735,11 @@ function select(id){
 function droneRecord(id){
   return (state.plan&&state.plan.fleet||[]).find(f=>f.id===id)||null;
 }
+// What the MASTER believes, as opposed to what the simulator knows. These
+// diverge exactly when a real ground station would be flying blind.
+function masterView(id){
+  return (state.plan&&state.plan.views||[]).find(v=>v.id===id)||null;
+}
 function barClass(p){ return p>50?'':(p>20?'warn':'crit'); }
 
 function renderParty(){
@@ -746,6 +751,7 @@ function renderParty(){
 
   drones.forEach(d=>{
     const rec=droneRecord(d.id);
+    const mvp=masterView(d.id);
     const card=document.createElement('div');
     card.className='party-card'+(state.selected===d.id?' sel':'')+(d.alive?'':' dead');
     card.onclick=()=>select(d.id);
@@ -758,11 +764,13 @@ function renderParty(){
     const info=document.createElement('div');
     const verbs=rec?rec.capabilities.map(c=>c.verb).filter(v=>v!=='loiter'):[];
     info.innerHTML=
-      `<div class="pc-name"><span>${esc(d.name.toUpperCase())}</span><em>${esc(d.status)}</em></div>`+
+      `<div class="pc-name"><span>${esc(d.name.toUpperCase())}</span>`+
+      `<em class="${mvp&&mvp.stale?'stale':''}">${esc(mvp?mvp.phase:d.status)}</em></div>`+
       `<div class="pc-role">${esc(verbs.join(' · ')||'—')}</div>`+
       `<div class="bar ${barClass(d.battery_pct)}"><span style="width:${d.battery_pct}%"></span></div>`+
       `<div class="bar-label"><span>BAT ${d.battery_pct.toFixed(0)}%</span>`+
-      `<span>${d.link_ok?'LINK OK':'NO LINK'}</span></div>`;
+      `<span class="${mvp&&mvp.stale?'stale':''}">${
+        mvp&&mvp.stale?'NO CONTACT':(d.link_ok?'LINK OK':'NO LINK')}</span></div>`;
 
     card.appendChild(cv); card.appendChild(info);
     list.appendChild(card);
@@ -780,6 +788,7 @@ function renderSummary(){
   const rec=droneRecord(d.id)||{capabilities:[],sensors:[],constraints:{}};
   const c=rec.constraints||{};
   const task=taskOf(d.current_task), next=taskOf(d.next_task);
+  const mv=masterView(d.id);
 
   box.innerHTML=`
     <div class="sum-head">
@@ -805,6 +814,21 @@ function renderSummary(){
                 next.depends_on&&next.depends_on.length?' · waits on '+esc(next.depends_on.join(',')):''}</div>`
             :`<span style="color:#888">nothing queued</span>`}
     </div>
+
+    ${mv?`
+    <div class="sum-section">MASTER'S VIEW${mv.stale?' · <span class="stale">STALE</span>':''}</div>
+    <dl class="kv">
+      <dt>ORDERED</dt><dd>${mv.verb?esc(mv.verb)+' ('+esc(mv.task_id||'')+')':'&mdash;'}</dd>
+      <dt>PHASE</dt><dd>${esc(mv.phase)}</dd>
+      <dt>DOING</dt><dd>${mv.activity?esc(mv.activity):'&mdash;'}</dd>
+      <dt>REPORTED</dt><dd>${mv.reports?Math.round(mv.progress*100)+'% ('+mv.reports+' rpt)':'&mdash;'}</dd>
+      <dt>DONE</dt><dd>${mv.completed&&mv.completed.length?esc(mv.completed.join(',')):'&mdash;'}</dd>
+      <dt>LAST HEARD</dt><dd>${mv.silent_for_s==null?'never':mv.silent_for_s.toFixed(1)+'s ago'}</dd>
+      ${mv.reason?`<dt>NOTE</dt><dd>${esc(mv.reason)}</dd>`:''}
+    </dl>
+    ${mv.stale?`<div class="stalebox">No word for ${mv.silent_for_s.toFixed(1)}s.
+      Everything below is ground truth you can see but the master currently
+      cannot.</div>`:''}`:''}
 
     <div class="sum-section">POSITION</div>
     <dl class="kv">
@@ -931,6 +955,9 @@ function drain(){
   }
   let i=0;
   const tick=()=>{
+    // a burst arriving mid-animation must not queue behind it: snap this line
+    // to full and get on with the backlog
+    if(queue.length>2){ p.textContent=text; logEl.scrollTop=logEl.scrollHeight; drain(); return; }
     p.textContent=text.slice(0,++i);
     logEl.scrollTop=logEl.scrollHeight;
     if(i<text.length) setTimeout(tick,9); else drain();

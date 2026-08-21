@@ -16,5 +16,8 @@ def drone_inbox(drone_id: str) -> str:
     return f"{ROOT}/drone/{drone_id}/inbox"
 
 
+ALL_TELEMETRY = f"{ROOT}/drone/+/telemetry"     # master + observers
+
+
 def drone_telemetry(drone_id: str) -> str:
     return f"{ROOT}/drone/{drone_id}/telemetry"

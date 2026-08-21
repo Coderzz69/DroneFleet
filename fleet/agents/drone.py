@@ -76,9 +76,9 @@ class DroneAgent:
         try:
             while self.running:
                 st = self.state
-                if st:
-                    # a drone with no radio link cannot be heard -- the physics
-                    # decides this, not a coin flip
+                # a dead drone is silent, and one with no radio link cannot be
+                # heard. The physics decides both -- never a coin flip.
+                if st and st.alive:
                     if st.link_ok:
                         await self.mqtt.publish(
                             topics.drone_telemetry(self.rec.id),
@@ -108,6 +108,18 @@ class DroneAgent:
 
         elif env.type == MsgType.TASK_ASSIGN:
             await self._accept(env)
+
+        elif env.type == MsgType.RECALL:
+            # ordered home. Distinct from ABORT: the work is finished, not
+            # cancelled, so anything in progress is allowed to stand.
+            if st:
+                st.returning = True
+                st.waypoints = [Waypoint(self.world.base[0], self.world.base[1], label="rtl")]
+                st.status = "RETURNING"
+                st.current_task = None
+                st.current_verb = ""
+                st.next_task = None
+                st.next_verb = ""
 
         elif env.type == MsgType.ABORT:
             if self._task:
@@ -211,7 +223,12 @@ class DroneAgent:
                         await self._send(Envelope(
                             type=MsgType.TASK_PROGRESS, src=self.rec.id, dst="master-0",
                             corr_id=task_id,
-                            payload={"task_id": task_id, "progress": round(st.task_progress, 3)}))
+                            payload={"task_id": task_id,
+                                     "progress": round(st.task_progress, 3),
+                                     # what it is actually doing right now.
+                                     # "0%" during a 10 km transit is true but
+                                     # useless without this.
+                                     "activity": st.status}))
 
                 done = (not st.waypoints and st.hold_timer <= 0) or st.task_progress >= 1.0
                 if done:

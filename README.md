@@ -31,6 +31,7 @@ python3 run.py          # then open http://127.0.0.1:8080
 14. [How it works](#14-how-it-works)
 15. [Tests](#15-tests)
 16. [Troubleshooting](#16-troubleshooting)
+17. [Seeing the MQTT working](#17-seeing-the-mqtt-working)
 
 ---
 
@@ -42,7 +43,9 @@ Start it:
 python3 run.py
 ```
 
-Open `http://127.0.0.1:8080` and type into the dialogue box at the bottom:
+Open `http://127.0.0.1:8080`. Type `prompts` in the dialogue box for a guide to
+everything you can say — it is generated from the loaded domain, so it is
+always accurate. Then:
 
 ```
 demo
@@ -91,13 +94,10 @@ On by default, but entirely optional — if Ollama is not installed the app
 starts anyway and uses the deterministic parser. See
 [section 11](#11-local-llm).
 
-### Optional: watch the bus from outside
+### Watching the bus
 
-If you have `mosquitto-clients` installed, the protocol is real MQTT:
-
-```
-mosquitto_sub -h 127.0.0.1 -p 1883 -t 'fleet/#' -v
-```
+See [section 17](#17-seeing-the-mqtt-working). Two tools ship with the project
+and need nothing installed.
 
 ---
 
@@ -223,8 +223,41 @@ Selecting a drone opens the **summary screen** below the list:
 | **OBJECTIVE** | Current task with live progress, and the next task queued, including what it is waiting on |
 | **POSITION** | Easting, northing, altitude, heading, speed, distance flown |
 | **SYSTEMS** | Battery, link state, signal strength in dBm, radio range, endurance, sensor swath, payload |
+| **MASTER'S VIEW** | What the master actually knows — see below |
 | **CAPABILITIES** | The verbs this drone announced |
 | **SENSORS** | What it actually carries |
+
+### What the master knows vs. what you can see
+
+The **MASTER'S VIEW** block is deliberately separate from the rows beneath it.
+Those rows are simulator ground truth — the omniscient view. The master's view
+is built *only* from messages that actually arrived over the radio:
+
+| Field | Source |
+|---|---|
+| `ORDERED` | The task the master itself dispatched |
+| `PHASE` | `IDLE` → `ASSIGNED` → `WORKING` → `DONE`, or `REJECTED` / `RECALLED` / `LOST` |
+| `DOING` | The drone's self-reported activity: `TRANSIT`, `WORKING`, `ON_STATION` |
+| `REPORTED` | Last progress figure, and how many reports have arrived |
+| `DONE` | Task IDs this drone has completed |
+| `LAST HEARD` | Seconds since any message from it |
+
+When a drone goes quiet the header turns **STALE** and the panel says so. That
+divergence is the point: a real ground station only knows what was radioed in,
+and `kill drone-1` or a lost link makes the gap visible immediately. The party
+list shows the master's phase and prints `NO CONTACT` rather than the
+simulator's link state once a belief has gone stale.
+
+Progress of `0%` during a long transit is honest, not broken — `DOING` says
+`TRANSIT`, because `area_search` progress counts search legs flown and the
+drone may have 10 km to cover before the first one.
+
+### Recall
+
+When a drone has no further tasking the master sends it an explicit `RECALL`
+and it flies home. Leaving a drone on station because nobody told it otherwise
+is how you lose an airframe to a flat battery. `RECALL` is distinct from
+`ABORT`: the work is finished, not cancelled.
 
 ### MISSION panel
 
@@ -297,7 +330,8 @@ Anything that is not a recognised command is treated as a **mission prompt**.
 
 | Command | Description |
 |---|---|
-| `help` or `?` | Print this list in the dialogue box |
+| `prompts` | **What you can actually type**, with worked examples |
+| `help` or `?` | The command list |
 
 ---
 
@@ -362,6 +396,10 @@ radio ≤ 80 km, payload ≤ 200 kg) so a typo cannot poison the physics.
 ---
 
 ## 6. Writing mission prompts
+
+> Type `prompts` in the app for this section rendered live from whichever
+> domain is loaded, including the exact words that map to each capability.
+
 
 Name the **final** thing you want done. The planner backward-chains the
 prerequisites for you. In the rescue domain, `deliver supplies` implies search
@@ -597,17 +635,26 @@ Parser: deterministic  (toggle in the app with `llm on` / `llm off`)
 
 ### Setup
 
-```
-export PATH="$HOME/.local/ollama/bin:$PATH"
-ollama serve &                          # daemon on 127.0.0.1:11434
-ollama pull qwen2.5:1.5b-instruct       # the default
+Nothing, if Ollama is installed. `python3 run.py` **starts the daemon itself**
+and fetches the model on first run:
 
-python3 run.py                          # LLM on
+```
+starting the local model service…
+ollama: started (/home/you/.local/ollama/bin/ollama)
+fetching qwen2.5:1.5b-instruct — first run only, this can take a few minutes…
+LLM on — qwen2.5:1.5b-instruct. Verbs are grammar-constrained to the
+search_and_rescue pack.
+```
+
+It looks for the binary on `PATH`, then `~/.local/ollama/bin`, `/usr/local/bin`
+and `/usr/bin`. If none is found the app still starts on the keyword parser and
+says so.
+
+```
+python3 run.py                          # LLM on, self-starting
 python3 run.py --llm-model gemma2:2b    # a 2B model instead
 python3 run.py --no-llm                 # deterministic parser only
 ```
-
-`./start.sh` starts the daemon, pulls the model if missing, and launches.
 
 Toggle live in the dialogue box: `llm on`, `llm off`, `llm status`,
 `llm model <tag>`.
@@ -747,6 +794,7 @@ YAML file in `packs/` and it is picked up automatically.
 ```yaml
 domain: my_domain
 keywords: [words, that, hint, at, this, domain]
+subject: intruders          # what this domain looks for, used by `prompts`
 
 verbs:
   my_verb:
@@ -828,7 +876,8 @@ report and a completion back to the original order.
 | `CAPABILITY_QUERY` / `CAPABILITY_ANNOUNCE` | Discovery |
 | `TASK_ASSIGN` / `TASK_ACK` / `TASK_REJECT` | Tasking |
 | `TASK_PROGRESS` / `TASK_COMPLETE` | Execution |
-| `TELEMETRY` / `HEARTBEAT` / `ALERT` / `ABORT` | Housekeeping |
+| `TELEMETRY` / `HEARTBEAT` / `ALERT` | Housekeeping |
+| `RECALL` / `ABORT` | Come home / stop now |
 
 Task states: `PENDING → ASSIGNED → ACKED → RUNNING → DONE`, with `FAILED` and
 `ABORTED` as exits.
@@ -840,7 +889,7 @@ Task states: `PENDING → ASSIGNED → ACKED → RUNNING → DONE`, with `FAILED
 | `fleet/broadcast` | master → all drones |
 | `fleet/drone/{id}/inbox` | master → one drone |
 | `fleet/master/inbox` | drones → master |
-| `fleet/drone/{id}/telemetry` | drone → anyone |
+| `fleet/drone/{id}/telemetry` | drone → master and observers |
 | `fleet/mission/plan`, `fleet/console` | runtime → UI (retained) |
 
 ### Physics
@@ -925,3 +974,95 @@ Expected on CPU with `gemma2:2b` (~34 s/call). Switch with
 **The wire log is empty**
 Heartbeats are hidden by default and a fresh tab only replays the last 80
 messages. Do something — register a drone or launch — and traffic appears.
+
+---
+
+## 17. Seeing the MQTT working
+
+Three ways, in increasing order of how convincing they are.
+
+### 1. The PROTOCOL panel
+
+Third tab on the right. Every message on the bus, mirrored into the browser
+live. Heartbeats are hidden by default — `HEARTBEATS: ON` shows them.
+
+Quickest look, but you are trusting the app to report on itself.
+
+### 2. Tail the bus from a separate process
+
+`tools/mqtt_tail.py` is an independent MQTT client. It connects to the broker
+over TCP and subscribes like anything else would — it imports no simulation
+code, so if it prints traffic, the traffic is real.
+
+```
+python3 tools/mqtt_tail.py                     # protocol, no heartbeats
+python3 tools/mqtt_tail.py --heartbeats        # everything
+python3 tools/mqtt_tail.py --types TASK_ASSIGN,TASK_COMPLETE
+python3 tools/mqtt_tail.py -t 'fleet/drone/+/inbox'
+python3 tools/mqtt_tail.py --raw               # full JSON of each envelope
+python3 tools/mqtt_tail.py --all               # include the UI feeds too
+```
+
+Run it in one terminal, the app in another, then `demo` → a mission → `launch`:
+
+```
+CAPABILITY_ANNOUNCE  drone-1 → master-0  [area_search,classify_survivor,loiter] sensors=thermal
+TASK_ASSIGN          master-0 → drone-3  [T0]  relay_comms region=(4860,6060 1080x1080) est=0s
+TASK_ASSIGN          master-0 → drone-1  [T1]  area_search region=(4860,6060 1080x1080) est=128s
+TASK_ACK             drone-3 → master-0  [T0]  relay_comms
+TASK_PROGRESS        drone-1 → master-0  [T1]  0% TRANSIT
+TASK_COMPLETE        drone-3 → master-0  [T0]  relay_comms -> {"ok": true}
+RECALL               master-0 → drone-3  no further tasking
+TASK_ASSIGN          master-0 → drone-1  [T2]  classify_survivor est=25s
+TASK_COMPLETE        drone-1 → master-0  [T2]  classify_survivor -> {"contact": "C1", "kind": "survivor", ...}
+TASK_ASSIGN          master-0 → drone-2  [T3]  deliver_payload est=40s
+TASK_COMPLETE        drone-2 → master-0  [T3]  deliver_payload -> {"contact": "C1", ...}
+RECALL               master-0 → drone-2  no further tasking
+```
+
+That is the whole protocol: discovery, tasking, acknowledgement, progress,
+completion with a result token, and recall.
+
+### 3. Drive the fleet from the command line
+
+`tools/mqtt_send.py` publishes onto the bus from outside. Nothing in it touches
+the simulation — it puts a packet on the broker and the real drones answer.
+
+```
+python3 tools/mqtt_send.py discover            # make every drone re-announce
+python3 tools/mqtt_send.py recall drone-2      # order one home
+python3 tools/mqtt_send.py abort               # stop everything
+python3 tools/mqtt_send.py raw fleet/broadcast '{"type":"CAPABILITY_QUERY","src":"cli"}'
+```
+
+With the tail running in another terminal, `discover` produces:
+
+```
+CAPABILITY_QUERY     cli → broadcast
+CAPABILITY_ANNOUNCE  drone-1 → master-0  [area_search,classify_survivor,loiter]
+CAPABILITY_ANNOUNCE  drone-2 → master-0  [deliver_payload,loiter]
+CAPABILITY_ANNOUNCE  drone-3 → master-0  [relay_comms,loiter]
+```
+
+A process that knows nothing about the app made three drones report in.
+
+### With standard MQTT tooling
+
+The broker speaks MQTT 3.1.1, so ordinary clients work if you have them:
+
+```
+mosquitto_sub -h 127.0.0.1 -p 1883 -t 'fleet/#' -v
+```
+
+The two tools above exist because `mosquitto-clients` is not installed
+everywhere; they need nothing beyond Python.
+
+### Against a real broker
+
+To prove it is not an in-process shortcut, point the app at mosquitto or EMQX:
+
+```
+python3 run.py --no-embed-broker --mqtt-host localhost --mqtt-port 1883
+```
+
+Nothing else changes — the built-in broker is a convenience, not a dependency.

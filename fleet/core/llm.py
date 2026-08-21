@@ -22,7 +22,11 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
+import shutil
+import subprocess
+import time
 import urllib.error
 import urllib.request
 from typing import Any, Optional
@@ -301,6 +305,94 @@ Never invent a location. If the order does not say where, use direction \
     def mission(self, text: str) -> dict[str, Any]:
         return self._generate(self.mission_system(), f"Mission order:\n{text}",
                               self.mission_schema(), max_tokens=90)
+
+
+# --------------------------------------------------------------------------
+# daemon lifecycle -- so the app is self-starting, not "remember to run ollama"
+# --------------------------------------------------------------------------
+BIN_CANDIDATES = [
+    os.path.expanduser("~/.local/ollama/bin/ollama"),
+    "/usr/local/bin/ollama",
+    "/usr/bin/ollama",
+]
+
+
+def find_binary() -> Optional[str]:
+    """PATH first, then the usual install locations including the rootless one."""
+    found = shutil.which("ollama")
+    if found:
+        return found
+    return next((p for p in BIN_CANDIDATES if os.path.isfile(p) and os.access(p, os.X_OK)),
+                None)
+
+
+def daemon_up(host: str = DEFAULT_HOST, timeout: float = 2.0) -> bool:
+    try:
+        req = urllib.request.Request(host.rstrip("/") + "/api/version")
+        with urllib.request.urlopen(req, timeout=timeout):
+            return True
+    except Exception:                                  # noqa: BLE001
+        return False
+
+
+def start_daemon(host: str = DEFAULT_HOST, wait_s: float = 25.0) -> tuple[bool, str]:
+    """Start `ollama serve` if it is not already listening.
+
+    Blocking -- callers run it in a worker thread. The process is detached so it
+    outlives a reload, and its output goes to a log rather than our stdout.
+    """
+    if daemon_up(host):
+        return True, "already running"
+
+    exe = find_binary()
+    if not exe:
+        return False, ("ollama is not installed — get it from https://ollama.com "
+                       "or run with --no-llm")
+
+    logfile = os.path.join(os.path.expanduser("~"), ".ollama", "serve.log")
+    os.makedirs(os.path.dirname(logfile), exist_ok=True)
+    try:
+        with open(logfile, "ab") as fh:
+            subprocess.Popen([exe, "serve"], stdout=fh, stderr=fh,
+                             stdin=subprocess.DEVNULL, start_new_session=True)
+    except Exception as exc:                           # noqa: BLE001
+        return False, f"could not start ollama ({exc})"
+
+    deadline = time.time() + wait_s
+    while time.time() < deadline:
+        if daemon_up(host):
+            return True, f"started ({exe})"
+        time.sleep(0.4)
+    return False, f"ollama did not come up within {wait_s:.0f}s — see {logfile}"
+
+
+def have_model(model: str, host: str = DEFAULT_HOST) -> bool:
+    try:
+        req = urllib.request.Request(host.rstrip("/") + "/api/tags")
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            names = [m.get("name", "") for m in json.loads(resp.read()).get("models", [])]
+        return any(n == model or n.split(":")[0] == model.split(":")[0] for n in names)
+    except Exception:                                  # noqa: BLE001
+        return False
+
+
+def pull_model(model: str, host: str = DEFAULT_HOST, timeout_s: float = 1800) -> tuple[bool, str]:
+    """Fetch a model that is not present yet. Blocking; run it in a thread."""
+    exe = find_binary()
+    if not exe:
+        return False, "ollama binary not found"
+    try:
+        proc = subprocess.run([exe, "pull", model], capture_output=True,
+                              timeout=timeout_s, env={**os.environ,
+                                                      "OLLAMA_HOST": host})
+        if proc.returncode == 0:
+            return True, f"pulled {model}"
+        tail = (proc.stderr or b"").decode(errors="replace").strip().splitlines()
+        return False, f"pull failed: {tail[-1] if tail else 'unknown error'}"
+    except subprocess.TimeoutExpired:
+        return False, f"pull of {model} timed out"
+    except Exception as exc:                           # noqa: BLE001
+        return False, f"pull failed ({exc})"
 
 
 def build(pack: Pack, model: str = DEFAULT_MODEL,

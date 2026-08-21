@@ -1,6 +1,9 @@
 domain: infrastructure_inspection
 keywords: [inspect, inspection, pipeline, powerline, power line, bridge, turbine, corrosion, crack, leak, survey, asset, tower]
 
+# what this domain goes looking for, in the operator's words
+subject: cracks and corrosion
+
 verbs:
   area_search:
     requires: [region]
