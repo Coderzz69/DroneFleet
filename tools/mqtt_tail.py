@@ -7,12 +7,12 @@ world -- if it prints traffic, the traffic is real.
 
     python3 tools/mqtt_tail.py                    # everything except heartbeats
     python3 tools/mqtt_tail.py --heartbeats       # everything
-    python3 tools/mqtt_tail.py -t 'fleet/drone/+/inbox'
+    python3 tools/mqtt_tail.py -t 'fleet/v1/drone/+/inbox'
     python3 tools/mqtt_tail.py --types TASK_ASSIGN,TASK_COMPLETE
     python3 tools/mqtt_tail.py --raw              # show the bytes on the wire
     python3 tools/mqtt_tail.py --port 18997       # a non-default broker
 
-Equivalent to `mosquitto_sub -t 'fleet/#' -v`, for machines without it.
+Equivalent to `mosquitto_sub -t 'fleet/v1/#' -v`, for machines without it.
 """
 from __future__ import annotations
 
@@ -25,7 +25,8 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from fleet.net.mqtt_client import MQTTClient      # noqa: E402  (path set above)
+from fleet.net import topics                      # noqa: E402  (path set above)
+from fleet.net.mqtt_client import MQTTClient      # noqa: E402
 
 C = {"reset": "\033[0m", "dim": "\033[2m", "bold": "\033[1m",
      "red": "\033[31m", "green": "\033[32m", "yellow": "\033[33m",
@@ -48,8 +49,17 @@ def summarise(env: dict) -> str:
     """One line of the interesting bits, per message type."""
     t, p = env.get("type", ""), env.get("payload") or {}
     if t == "CAPABILITY_ANNOUNCE":
-        verbs = ",".join(c.get("verb", "?") for c in p.get("capabilities", []))
-        return f"[{verbs}] sensors={'/'.join(p.get('sensors') or []) or 'none'}"
+        # Two shapes ride this topic: the compact in-process announcement
+        # ({"verb": ...}, plain sensor names) and a full protocol manifest
+        # ({"name": ...}, sensor objects). Read both.
+        verbs = ",".join(
+            (c.get("name") or c.get("verb") or "?") if isinstance(c, dict) else str(c)
+            for c in p.get("capabilities") or [])
+        sensors = "/".join(
+            (s.get("kind") or s.get("sensor_id") or "?") if isinstance(s, dict) else str(s)
+            for s in p.get("sensors") or [])
+        who = p.get("model") or p.get("vehicle_type") or ""
+        return f"[{verbs}] sensors={sensors or 'none'}" + (f" ({who})" if who else "")
     if t == "TASK_ASSIGN":
         r = (p.get("params") or {}).get("region") or {}
         where = f" region=({r.get('x',0):.0f},{r.get('y',0):.0f} {r.get('w',0):.0f}x{r.get('h',0):.0f})" if r else ""
@@ -75,7 +85,7 @@ def summarise(env: dict) -> str:
 async def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("-t", "--topic", default="fleet/#", help="topic filter")
+    ap.add_argument("-t", "--topic", default=topics.ALL, help="topic filter")
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--port", type=int, default=1883)
     ap.add_argument("--heartbeats", action="store_true",
@@ -91,8 +101,9 @@ async def main() -> int:
     keep = {t.strip().upper() for t in args.types.split(",") if t.strip()}
     noisy = {"HEARTBEAT", "TELEMETRY"}
     # these carry UI text, not protocol envelopes -- they have no src/dst and
-    # would render as "? -> ?"
-    ui_topics = {"fleet/console", "fleet/mission/plan", "fleet/world/tick"}
+    # would render as "? -> ?". Taken from the topic map rather than spelled
+    # out here, so a version bump does not silently turn the filter off.
+    ui_topics = topics.UI_TOPICS
     seen = {"n": 0}
 
     client = MQTTClient(f"tail-{os.getpid()}", args.host, args.port)
@@ -112,7 +123,7 @@ async def main() -> int:
             return
         seen["n"] += 1
 
-        short = topic.replace("fleet/", "")
+        short = topics.shorten(topic)
         line = (f"{paint(time.strftime('%H:%M:%S'), 'dim', colour)}  "
                 f"{paint(f'{mtype:<20}', TYPE_COLOR.get(mtype, ''), colour)} "
                 f"{paint(env.get('src','?'), 'bold', colour)} → {env.get('dst','?')}"

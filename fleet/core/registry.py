@@ -39,6 +39,18 @@ class DroneRecord:
     constraints: Constraints = field(default_factory=Constraints)
     unmapped_text: list[str] = field(default_factory=list)
     source_text: str = ""
+    # Capabilities and sensors the vehicle declared but that are NOT offered to
+    # the planner -- human-authorization-only actions, unhealthy sensors,
+    # out-of-envelope numbers. Kept so the master can say why, instead of the
+    # capability just quietly not being there.
+    withheld: list[str] = field(default_factory=list)
+    # The rich vendor manifest, carried opaquely so the planner stays
+    # domain-neutral while the mothership can still display and audit it.
+    metadata: dict[str, Any] = field(default_factory=dict)
+    # True when this record came from an independently launched vehicle over
+    # the protocol rather than from an operator description parsed in-process.
+    remote: bool = False
+    online: bool = False
 
     def verbs(self) -> set[str]:
         return {c.verb for c in self.capabilities}

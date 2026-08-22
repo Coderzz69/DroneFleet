@@ -14,7 +14,7 @@ packet on the broker and the real drones answer it.
     python3 tools/mqtt_send.py abort
 
     # anything at all
-    python3 tools/mqtt_send.py raw fleet/broadcast '{"type":"CAPABILITY_QUERY","src":"cli"}'
+    python3 tools/mqtt_send.py raw fleet/v1/broadcast '{"type":"CAPABILITY_QUERY","src":"cli"}'
 
 Run `tools/mqtt_tail.py` in another terminal to see the responses.
 """

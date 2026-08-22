@@ -58,7 +58,7 @@ async def main() -> None:
           f"{' (embedded)' if not args.no_embed_broker else ''}")
     print(f"  Parser: {'LLM ' + args.llm_model if use_llm else 'deterministic'}"
           f"  (toggle in the app with `llm on` / `llm off`)")
-    print("  Watch the raw protocol:  mosquitto_sub -t 'fleet/#' -v\n")
+    print("  Watch the raw protocol:  mosquitto_sub -t 'fleet/v1/#' -v\n")
     if args.open:
         webbrowser.open(url)
 

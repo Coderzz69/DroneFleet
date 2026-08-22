@@ -460,6 +460,7 @@ let frame=0;
 function render(){
   frame++;
   const t=tilePx();
+  const drones=displayDrones();
   ctx.fillStyle='#000'; ctx.fillRect(0,0,cssW,cssH);
 
   // --- terrain -----------------------------------------------------------
@@ -514,7 +515,7 @@ function render(){
   }
 
   // --- routes -------------------------------------------------------------
-  (w.drones||[]).forEach(d=>{
+  drones.forEach(d=>{
     if(!d.waypoints||!d.waypoints.length||!d.alive) return;
     const sel = state.selected===d.id;
     ctx.save();
@@ -528,12 +529,12 @@ function render(){
   });
 
   // --- comms relay links --------------------------------------------------
-  (w.drones||[]).forEach(d=>{
+  drones.forEach(d=>{
     if(!d.alive) return;
     let ax,ay;
     if(d.link_via==='direct'){ [ax,ay]=w2s(w.base.x,w.base.y); }
     else if(d.link_via&&d.link_via!=='none'){
-      const r=(w.drones||[]).find(o=>o.id===d.link_via); if(!r) return;
+      const r=drones.find(o=>o.id===d.link_via); if(!r) return;
       [ax,ay]=w2s(r.x,r.y);
     } else return;
     const [bx,by]=w2s(d.x,d.y);
@@ -567,7 +568,7 @@ function render(){
   });
 
   // --- drones -------------------------------------------------------------
-  (w.drones||[]).forEach(d=>{
+  drones.forEach(d=>{
     const [sx,sy]=w2s(d.x,d.y);
     const color=ROLE_COLOR[d.current_verb]||roleColorOf(d.id);
     const size=Math.max(20,t*2.0);
@@ -613,7 +614,7 @@ function render(){
     if(seen.length){
       ctx.save();
       const lh=13, pad=6, bw=104, bh=pad*2+seen.length*lh;
-      const bx=10, by=cssH-bh-26;
+      const bx=10, by=cssH-bh-30;   // 30 = clearance for the hint line beneath
       ctx.fillStyle='rgba(16,28,52,.86)'; ctx.fillRect(bx,by,bw,bh);
       ctx.strokeStyle='#000'; ctx.lineWidth=2; ctx.strokeRect(bx,by,bw,bh);
       ctx.font='8px "Press Start 2P",monospace'; ctx.textAlign='left';
@@ -628,7 +629,7 @@ function render(){
   }
 
   if(state.follow&&state.selected){
-    const d=(w.drones||[]).find(x=>x.id===state.selected);
+    const d=drones.find(x=>x.id===state.selected);
     if(d) centerOn(d.x,d.y);
   }
 
@@ -661,7 +662,7 @@ canvas.addEventListener('click',e=>{
   const sx=e.clientX-r.left, sy=e.clientY-r.top;
   const w=state.world; if(!w) return;
   let best=null,bestD=1e9;
-  (w.drones||[]).forEach(d=>{
+  displayDrones().forEach(d=>{
     const [dx,dy]=w2s(d.x,d.y);
     const dist=Math.hypot(dx-sx,dy-sy);
     if(dist<bestD){bestD=dist;best=d;}
@@ -726,7 +727,7 @@ function select(id){
   state.selected=id;
   renderParty();
   if(id&&state.follow){
-    const d=(state.world.drones||[]).find(x=>x.id===id);
+    const d=displayDrones().find(x=>x.id===id);
     if(d) centerOn(d.x,d.y);
   }
 }
@@ -735,6 +736,43 @@ function select(id){
 function droneRecord(id){
   return (state.plan&&state.plan.fleet||[]).find(f=>f.id===id)||null;
 }
+// The simulator owns a full world object for every locally described drone.
+// An independently launched protocol vehicle has no body here, so everything
+// the map can say about it comes from the master's registry plus the telemetry
+// it actually received. Merge both into one read-only list so the map, the
+// party panel and the detail panel do not each need to know the difference.
+function displayDrones(){
+  const w=state.world||{};
+  const out=[...(w.drones||[])];
+  const ids=new Set(out.map(d=>d.id));
+  const base=w.base||{x:0,y:0};
+  ((state.plan&&state.plan.fleet)||[]).forEach(rec=>{
+    if(!rec.remote||ids.has(rec.id)) return;
+    const mv=masterView(rec.id)||{};
+    const declared=(rec.metadata&&rec.metadata.state)||{};
+    const alive=rec.online!==false&&mv.phase!=='LOST';
+    const airborne=Boolean(mv.airborne);
+    // Its only "route" is wherever it last said it was heading.
+    const route=(mv.target_x==null||mv.target_y==null)?[]:[{x:mv.target_x,y:mv.target_y}];
+    const battery=mv.battery_pct==null
+      ?(declared.battery_pct==null?100:declared.battery_pct):mv.battery_pct;
+    out.push({
+      id:rec.id, name:rec.name||rec.id,
+      x:mv.x==null?base.x:mv.x, y:mv.y==null?base.y:mv.y,
+      z:airborne?(rec.constraints&&rec.constraints.altitude_m)||0:0,
+      heading_deg:mv.heading_deg||0, speed_ms:mv.speed_ms||0,
+      battery_pct:battery, alive, airborne,
+      status:alive?(mv.activity||mv.phase||'ONLINE'):'LOST',
+      current_task:mv.task_id||null, current_verb:mv.verb||'',
+      next_task:null, next_verb:'', task_progress:mv.progress||0,
+      link_ok:mv.link_ok!==false, link_dbm:null,
+      link_via:mv.link_via||'direct',
+      swath_m:rec.swath_m||0, distance_km:null, waypoints:route, remote:true,
+    });
+  });
+  return out;
+}
+
 // What the MASTER believes, as opposed to what the simulator knows. These
 // diverge exactly when a real ground station would be flying blind.
 function masterView(id){
@@ -745,7 +783,7 @@ function barClass(p){ return p>50?'':(p>20?'warn':'crit'); }
 function renderParty(){
   const list=document.getElementById('party-list');
   const empty=document.getElementById('party-empty');
-  const drones=(state.world&&state.world.drones)||[];
+  const drones=displayDrones();
   empty.hidden = drones.length>0;
   list.innerHTML='';
 
@@ -781,7 +819,7 @@ function renderParty(){
 
 function renderSummary(){
   const box=document.getElementById('summary');
-  const d=(state.world&&state.world.drones||[]).find(x=>x.id===state.selected);
+  const d=displayDrones().find(x=>x.id===state.selected);
   if(!d){ box.hidden=true; return; }
   box.hidden=false;
 
@@ -834,10 +872,10 @@ function renderSummary(){
     <dl class="kv">
       <dt>EASTING</dt><dd>${(d.x/1000).toFixed(2)} km</dd>
       <dt>NORTHING</dt><dd>${(d.y/1000).toFixed(2)} km</dd>
-      <dt>ALTITUDE</dt><dd>${d.z.toFixed(0)} m</dd>
+      <dt>ALTITUDE</dt><dd>${(d.z||0).toFixed(0)} m</dd>
       <dt>HEADING</dt><dd>${d.heading_deg.toFixed(0)}°</dd>
       <dt>SPEED</dt><dd>${d.speed_ms.toFixed(1)} m/s</dd>
-      <dt>FLOWN</dt><dd>${d.distance_km.toFixed(2)} km</dd>
+      <dt>FLOWN</dt><dd>${d.distance_km==null?'—':d.distance_km.toFixed(2)+' km'}</dd>
     </dl>
 
     <div class="sum-section">SYSTEMS</div>
@@ -845,7 +883,7 @@ function renderSummary(){
     <div class="bar-label"><span>BATTERY</span><span>${d.battery_pct.toFixed(0)}%</span></div>
     <dl class="kv" style="margin-top:8px">
       <dt>LINK</dt><dd>${d.link_ok?esc(d.link_via==='direct'?'DIRECT':'VIA '+d.link_via):'LOST'}</dd>
-      <dt>SIGNAL</dt><dd>${d.link_dbm.toFixed(0)} dBm</dd>
+      <dt>SIGNAL</dt><dd>${d.link_dbm==null?'—':d.link_dbm.toFixed(0)+' dBm'}</dd>
       <dt>RADIO</dt><dd>${((c.comms_range_m||0)/1000).toFixed(1)} km</dd>
       <dt>ENDURANCE</dt><dd>${(c.endurance_min||0).toFixed(0)} min</dd>
       <dt>SWATH</dt><dd>${(d.swath_m||0).toFixed(0)} m</dd>
@@ -904,7 +942,7 @@ function renderMission(){
 function pushWire(topic,env){
   // heartbeats are ~80% of the traffic and bury the interesting exchanges
   if(env.type==='HEARTBEAT'&&!state.showHb) return;
-  const short=topic.replace('fleet/','').replace('/inbox','');
+  const short=topic.replace(/^fleet\/v\d+\//,'').replace('/inbox','');
   state.wire.push({t:new Date(),topic:short,env});
   if(state.wire.length>400) state.wire.shift();
   const log=document.getElementById('wire-log');

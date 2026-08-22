@@ -99,6 +99,24 @@ starts anyway and uses the deterministic parser. See
 See [section 17](#17-seeing-the-mqtt-working). Two tools ship with the project
 and need nothing installed.
 
+### External protocol drones
+
+The mothership also accepts independently launched drone processes over the
+versioned MQTT protocol — separate OS processes that it never imports or
+instantiates, and that it learns entirely from their announced manifest:
+
+```bash
+python3 run.py --no-llm --mqtt-port 18830
+python3 -m fleet.drone_node --id scout-1   --profile recon   --mqtt-port 18830
+python3 -m fleet.drone_node --id courier-1 --profile courier --mqtt-port 18830
+```
+
+They appear on the map and in the party panel as they announce, get planned
+into missions alongside locally described drones, and are re-planned around
+when one drops or a new one joins. See
+[DRONE_PROTOCOL.md](DRONE_PROTOCOL.md) for the manifest fields, the message
+lifecycle and the safety boundary.
+
 ---
 
 ## 3. The interface
@@ -867,9 +885,13 @@ tests/
 
 ### The protocol
 
-Every message uses one envelope: `msg_id`, `ts`, `src`, `dst`, `type`,
-`corr_id`, `requires_ack`, `payload`. `corr_id` is what ties an ACK, a progress
-report and a completion back to the original order.
+Every message uses one versioned envelope: `protocol`, `protocol_version`,
+`msg_id`, `ts`, `src`, `dst`, `type`, `mission_id`, `corr_id`, `requires_ack`,
+`expires_at`, `payload`. `corr_id` is what ties an ACK, a progress report and a
+completion back to the original order. `mission_id` groups one task graph —
+task ids restart at `T1` every plan, so they are only unique within a mission.
+See [DRONE_PROTOCOL.md](DRONE_PROTOCOL.md) for the full interoperability
+contract.
 
 | Type | Meaning |
 |---|---|
@@ -878,6 +900,7 @@ report and a completion back to the original order.
 | `TASK_PROGRESS` / `TASK_COMPLETE` | Execution |
 | `TELEMETRY` / `HEARTBEAT` / `ALERT` | Housekeeping |
 | `RECALL` / `ABORT` | Come home / stop now |
+| `AUTHORIZATION_REQUEST` / `AUTHORIZATION_GRANT` / `AUTHORIZATION_DENY` | The explicit human-approval boundary. Nothing here ever issues a grant. |
 
 Task states: `PENDING → ASSIGNED → ACKED → RUNNING → DONE`, with `FAILED` and
 `ABORTED` as exits.
@@ -886,11 +909,14 @@ Task states: `PENDING → ASSIGNED → ACKED → RUNNING → DONE`, with `FAILED
 
 | Topic | Direction |
 |---|---|
-| `fleet/broadcast` | master → all drones |
-| `fleet/drone/{id}/inbox` | master → one drone |
-| `fleet/master/inbox` | drones → master |
-| `fleet/drone/{id}/telemetry` | drone → master and observers |
-| `fleet/mission/plan`, `fleet/console` | runtime → UI (retained) |
+| `fleet/v1/broadcast` | master → all drones |
+| `fleet/v1/drone/{id}/inbox` | master → one drone |
+| `fleet/v1/master/inbox` | drones → master |
+| `fleet/v1/drone/{id}/telemetry` | drone → master and observers |
+| `fleet/v1/mission/plan`, `fleet/v1/console` | runtime → UI (retained) |
+
+The version lives in the topic root so a future v2 fleet can share a broker
+without either side having to parse and discard the other's traffic.
 
 ### Physics
 
@@ -914,8 +940,9 @@ cost a lot and change nothing about the protocol, which is the point.
 ## 15. Tests
 
 ```
-python3 -m tests.test_planner       # 24 assertions, no AI / network / UI
-python3 -m tests.test_integration   # 18 assertions, real broker + real physics
+python3 -m tests.test_planner       # 58 assertions, no AI / network / UI
+python3 -m tests.test_integration   # 29 assertions, real broker + real physics
+python3 -m tests.test_protocol      # 88 assertions, external vehicles over the bus
 python3 -m tests.test_llm           # 28 assertions, real Ollama (skips if absent)
 
 FLEET_LLM_MODEL=qwen2.5:1.5b-instruct python3 -m tests.test_llm
@@ -998,7 +1025,7 @@ code, so if it prints traffic, the traffic is real.
 python3 tools/mqtt_tail.py                     # protocol, no heartbeats
 python3 tools/mqtt_tail.py --heartbeats        # everything
 python3 tools/mqtt_tail.py --types TASK_ASSIGN,TASK_COMPLETE
-python3 tools/mqtt_tail.py -t 'fleet/drone/+/inbox'
+python3 tools/mqtt_tail.py -t 'fleet/v1/drone/+/inbox'
 python3 tools/mqtt_tail.py --raw               # full JSON of each envelope
 python3 tools/mqtt_tail.py --all               # include the UI feeds too
 ```
@@ -1032,7 +1059,7 @@ the simulation — it puts a packet on the broker and the real drones answer.
 python3 tools/mqtt_send.py discover            # make every drone re-announce
 python3 tools/mqtt_send.py recall drone-2      # order one home
 python3 tools/mqtt_send.py abort               # stop everything
-python3 tools/mqtt_send.py raw fleet/broadcast '{"type":"CAPABILITY_QUERY","src":"cli"}'
+python3 tools/mqtt_send.py raw fleet/v1/broadcast '{"type":"CAPABILITY_QUERY","src":"cli"}'
 ```
 
 With the tail running in another terminal, `discover` produces:
@@ -1051,7 +1078,7 @@ A process that knows nothing about the app made three drones report in.
 The broker speaks MQTT 3.1.1, so ordinary clients work if you have them:
 
 ```
-mosquitto_sub -h 127.0.0.1 -p 1883 -t 'fleet/#' -v
+mosquitto_sub -h 127.0.0.1 -p 1883 -t 'fleet/v1/#' -v
 ```
 
 The two tools above exist because `mosquitto-clients` is not installed

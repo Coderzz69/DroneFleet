@@ -302,6 +302,10 @@ class Runtime:
                 self.world.despawn(d.id)
             self.master.plan = None
             self.master.mission_active = False
+            # the objective has to go too: _add_drone re-evaluates last_prompt
+            # for every new arrival, so a stale one makes a cleared mission
+            # come back as a phantom verdict on the next `demo`
+            self.last_prompt = ""
             self.world.contacts.clear()
             self.world.coverage.clear()
             self.world.hazard = {}
@@ -517,6 +521,12 @@ class Runtime:
 
         changed = []
         for rec in self.master.registry.all():
+            if rec.remote:
+                # A vehicle that declared its own capabilities over the
+                # protocol is not ours to reinterpret. Its manifest names the
+                # verbs it will honour; re-reading it against a different pack
+                # would invent capabilities it never agreed to.
+                continue
             if not rec.source_text:
                 continue
             fresh = await asyncio.to_thread(
@@ -577,7 +587,12 @@ class Runtime:
             await self.say("warn", f"  not understood: {u}")
         await self.master.push_plan()
 
-        if self.last_prompt:
+        if self.master.mission_active:
+            # Mid-flight. Re-validate the running plan against the bigger
+            # fleet, but do not rebuild it -- `evaluate` resets every task to
+            # PENDING, which would fly the whole mission again from the start.
+            await self.master.fleet_changed(f"{rec.name} joined the fleet")
+        elif self.last_prompt:
             await self._evaluate(self.last_prompt, quiet_prompt=True)
 
     def _pack_that_knows(self, description: str) -> str:

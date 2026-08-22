@@ -18,11 +18,15 @@ python3 run.py --port 8090 --mqtt-port 18090
 
 python3 -m tests.test_planner       # 58 assertions · no AI, no network, no UI
 python3 -m tests.test_integration   # 29 assertions · real broker, real physics
+python3 -m tests.test_protocol      # 88 assertions · external vehicles over the bus
 python3 -m tests.test_llm           # 28 assertions · real Ollama, skips if absent
 FLEET_LLM_MODEL=gemma2:2b python3 -m tests.test_llm
 
 python3 tools/mqtt_tail.py          # watch the bus from a separate process
 python3 tools/mqtt_send.py discover # drive the fleet from outside
+
+# an independently launched vehicle, in its own process
+python3 -m fleet.drone_node --id scout-1 --profile recon --mqtt-port 18830
 ```
 
 There is **no pytest**. Tests are plain scripts with a `check()` helper that
@@ -70,13 +74,26 @@ project rather than causing an error.
    It holds no mission state, only receives events and sends command strings.
    That discipline is what would let the same page drive real hardware.
 
-5. **Ground truth ≠ what the master knows.**
+5. **A vehicle is whatever announced itself.**
+   `CAPABILITY_ANNOUNCE` is the only door into the registry, and in-process
+   simulator drones and independently launched ones both come through it —
+   the master has no privileged channel to either. A vehicle may only announce
+   itself: a manifest whose `drone_id` differs from the envelope `src` is
+   refused. `core/protocol.py` is the only reader of that payload.
+
+6. **A capability a vendor gates, the planner never sees.**
+   `requires_human_authorization` and `supports_autonomous_execution: false`
+   are filtered out in `DroneManifest.to_record()`, not at dispatch. The
+   mission then reports an honest gap instead of stalling. Nothing anywhere
+   issues an `AUTHORIZATION_GRANT`; do not add one.
+
+7. **Ground truth ≠ what the master knows.**
    `world.DroneState` is omniscient simulator truth. `master.DroneView` is
    belief built *only* from received messages. They must stay separate — the
    divergence when a link drops is the demo. A contact's `truth` field is
    stripped in `world.snapshot()` and must never reach the browser.
 
-6. **Hazards are scene-setting.** They never affect feasibility, timing or
+8. **Hazards are scene-setting.** They never affect feasibility, timing or
    physics. `spec.hazard` is display-only.
 
 ## Layout
@@ -89,10 +106,12 @@ fleet/core/     engine — no I/O
   planner.py      backward chaining → binding → deterministic validation
   nlp.py          text→struct; keyword parser + LLM merge; LIMITS clamping
   llm.py          Ollama adapter, prompts, schemas, guard rails, daemon start
+  protocol.py     the versioned wire contract: manifest in, DroneRecord out
 fleet/net/      transport only (broker, client, topics)
 fleet/agents/   master.py (planning, dispatch, interlocks, DroneView)
                 drone.py  (one autonomous agent per drone)
 fleet/sim/      world.py — kinematics, wind, power, link budget, sensing
+fleet/drone_node.py   a standalone vehicle process; the protocol reference
 fleet/web/      server.py (HTTP+WS), runtime.py (the only module wiring all layers)
 frontend/       app.js is ~1000 lines of canvas + panels, vanilla, no build step
 packs/          *.yaml — the domain vocabularies
@@ -137,6 +156,26 @@ any edit lands — and the failure looks like "nothing happened".
 **Whitespace-sensitive string replacement.** Much of this codebase was edited by
 script. `const rec = droneRecord(...)` vs `const rec=droneRecord(...)` silently
 no-matches. Always verify the replacement count.
+
+**Task ids are positional, not stable.** The planner numbers the chain
+`T1, T2, …`, and the chain is re-derived from the surviving fleet on every
+replan — so `T2` can be a different verb after a drone dies. `_replan_live`
+carries execution state across keyed by **verb**, which is unique per plan.
+Keying it by id marks an untouched task DONE.
+
+**Task ids only scope to a mission.** Every plan restarts at `T1`, so a vehicle
+deduping on `task_id` alone discards the whole second mission. That is what
+`mission_id` in the envelope is for.
+
+**`_switch_pack` must skip remote records.** It re-reads every drone's
+`source_text` against the new vocabulary. A vehicle that declared its own
+capabilities over the protocol is not ours to reinterpret, and it has no
+`source_text` worth parsing — running it through the keyword parser silently
+strips its capabilities.
+
+**`pkill -f` matches this shell.** Kill a stuck instance by its listening port
+via `ss -lptnH "sport = :PORT"` instead; `pkill -f run.py` exits 144 by killing
+the agent's own process tree.
 
 ## LLM integration
 

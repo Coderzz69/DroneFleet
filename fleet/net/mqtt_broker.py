@@ -1,7 +1,7 @@
 """A minimal but genuine MQTT 3.1.1 broker (QoS 0), pure asyncio.
 
 Exists so the demo runs with zero installs. It speaks real MQTT on the wire --
-you can point `mosquitto_sub -t 'fleet/#' -v` at it and watch the fleet talk.
+you can point `mosquitto_sub -t 'fleet/v1/#' -v` at it and watch the fleet talk.
 To use a production broker instead, set FLEET_MQTT_HOST/PORT and skip this.
 
 Supported: CONNECT/CONNACK, PUBLISH (QoS 0), SUBSCRIBE/SUBACK,
