@@ -4,10 +4,7 @@ Describe your drones in plain English, give them a mission, and DroneFleet tells
 fleet can actually do it** before anything takes off. If it can't, it names exactly what's missing.
 Then it flies the mission in a physics sim over MQTT, rendered as a GBA-style overworld.
 
-<p align="center">
-  <a href="docs/demo.mp4"><img src="docs/demo.gif" width="800" alt="A real session: plan a rescue, kill a drone mid-mission, watch the verdict flip, fix it"></a>
-  <br><a href="docs/demo.mp4"><b>▶ Watch the 44-second demo (with sound)</b></a>
-</p>
+https://github.com/user-attachments/assets/69045e6d-8b1f-490b-b377-b82920e10add
 
 ```
 > demo
