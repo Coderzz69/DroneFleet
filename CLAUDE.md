@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-Working notes for this repo. The [README](README.md) is the user manual — this
+Working notes for this repo. The [user manual](docs/MANUAL.md) is the full reference — this
 file is the stuff you only learn by breaking it.
 
 ## What this is
